@@ -14,17 +14,24 @@ def setUpArguments():
     parser.add_argument("-s", "--save", action="store", help="name of file you want saved ")
     parser.add_argument("-n", "--number", action="store", type=int, help="size of square segments wanted",required=True)
     return parser.parse_args()   
-def breakUpImage(image,pieces):
+def breakUpImage(image,length):
    image=misc.imread(image)
    dimensions=image.shape
-   if dimensions[0]!=dimensions[1]:
+   if dimensions[0] != dimensions[1]:
        print("Only square images will work for now ")
        exit()
-   if dimensions[0]%pieces != 0 or dimensions[1]%pieces != 0:
+   if dimensions[0]%length != 0 or dimensions[1]%length != 0:
        print("unable to break up image into equal squares")
        exit()
-    segments=[]
-    for()   
+   segments = []
+   x,y = 0
+   picX,picY = 0
+   for x in range(dimensions[0]):
+       for y in range(dimensions[1]):
+           save = image[picX: picX+length][picY: picY+length] 
+           picY+=length
+       picX+=length 
+
 
 
 
