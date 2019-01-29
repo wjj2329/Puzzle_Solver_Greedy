@@ -24,11 +24,11 @@ def breakUpImage(image,length):
        print("unable to break up image into equal squares")
        exit()
    segments = []
-   x,y = 0
-   picX,picY = 0
+   x, y = 0, 0
+   picX,picY = 0, 0
    for x in range(dimensions[0]):
        for y in range(dimensions[1]):
-           save = image[picX: picX+length][picY: picY+length] 
+           save = image[picX: picX+length][picY: picY+length]
            picY+=length
        picX+=length 
 
