@@ -26,11 +26,14 @@ def breakUpImage(image,length):
    segments = []
    x, y = 0, 0
    picX,picY = 0, 0
-   for x in range(dimensions[0]):
-       for y in range(dimensions[1]):
-           save = image[picX: picX+length][picY: picY+length]
+   for x in range(int(dimensions[0]/length)):
+       for y in range(int(dimensions[1]/length)):
+           save = image[picX: picX+length, picY: picY+length,:]
+           print(save.shape, picX, picY, length)
+           misc.imsave(str(x)+"_"+str(y)+".png", save)
            picY+=length
-       picX+=length 
+       picX+=length
+       picY=0 
 
 
 
