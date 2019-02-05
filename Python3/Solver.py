@@ -1,8 +1,11 @@
 import argparse
 import numpy as np
+import random
+import sys
 from scipy import misc
 from enum import Enum
 from scipy.ndimage.morphology import binary_dilation
+
 class JoinDirection(Enum):
     UP = 1
     DOWN = 2
@@ -11,7 +14,30 @@ class JoinDirection(Enum):
 
 class DistanceMetric(Enum):
     EUCLIDEAN = 1
-    MAHALANOBIS = 2      
+    MAHALANOBIS = 2  
+
+class BestConnection:
+    pic_connection_matix = None
+    join_direction = None
+    join_segment = None
+    score = sys.maxsize
+    own_segment = None
+    binary_connection_matrix = None
+
+    def __init__(self, pic_connection_matix=None, join_direction=None, join_segment=None, binary_connection_matrix=None):
+        self.join_direction = join_direction
+        self.pic_connection_matix = pic_connection_matix
+        self.join_segment = join_segment
+        self.binary_connection_matrix = binary_connection_matrix
+
+    def isBetterConnection(self, otherConnection):
+        return self.score < otherConnection.score  
+    def setNodeContents(self, my_list):
+        my_list.remove(self.own_segment)
+        self.own_segment.pic_connection_matix = self.pic_connection_matix
+        self.own_segment.binary_connection_matrix = self.binary_connection_matrix
+        my_list.append(self.own_segment) 
+
 
 class Segment:
     pic_matrix=None
@@ -20,10 +46,12 @@ class Segment:
     pic_connection_matix=None
     max_width = 0
     max_height = 0
+    best_connection_found_so_far = BestConnection()
+    connection_to_compare = BestConnection()
 
     def __init__(self,pic_matrix, max_width, max_height):
         self.pic_matrix = pic_matrix
-        self.pic_connection_matix = np.asarray([[pic_matrix,0], [0,0]])
+        self.pic_connection_matix = np.asarray([[self,0], [0,0]])
         self.max_width = max_width
         self.max_height = max_height
 
@@ -59,7 +87,7 @@ class Segment:
             return False
         return True
     
-    def getscore(self, pair1, pair2,  nodearray1, nodearray2, direction, compare_segment, r, c, location, currentround):
+    def getscore(self, pair2, direction, compare_segment, r, c, binary_matrix):
         piece1 = self.pic_connection_matix
         piece2 = compare_segment.pic_connection_matix
         h1 = piece1.shape[0]
@@ -73,34 +101,26 @@ class Segment:
         temp[r:(h2+r),c:(w2+c)] = piece2
         distancex = 0
         distancey = 0
-        stuff=temp.nonzero()
+        stuff = temp.nonzero()
         for y in range(0, len(stuff[0])):
-            storeing=stuff[0][y],stuff[1][y]
-            distancex=storeing[0]-pair2[0]
-            distancey=storeing[1]-pair2[1]
-            padded1[pair2[0]+distancex][pair2[1]+distancey]=temp[storeing[0], storeing[1]]
-        if temp[pair2[0], pair2[1]]==0 or padded1[pair2[0], pair2[1]]==0:
+            storeing = stuff[0][y],stuff[1][y]
+            distancex = storeing[0]-pair2[0]
+            distancey = storeing[1]-pair2[1]
+            padded1[pair2[0]+distancex][pair2[1]+distancey] = temp[storeing[0], storeing[1]]
+        if temp[pair2[0], pair2[1]] == 0 or padded1[pair2[0], pair2[1]] == 0:
             raise ValueError('SOMETHING WENT WRONG')
-        if direction=="right":
-            self.bestpicarraytemp=padded1
-            self.globaldirection="right"
-            self.globalnode=node2
-            return self.score_dict[JoinDirection.RIGHT,temp[pair2[0], pair2[1]].pic)]
-        elif direction=="left":
-            self.globaldirection="left"
-            self.globalnode=node2
-            self.bestpicarraytemp=padded1
-            return self.scoreforleft(padded1[pair1[0], pair1[1]].pic, temp[pair2[0], pair2[1]].pic,node2, temp[pair2[0], pair2[1]], padded1[pair1[0], pair1[1]], currentround)
-        elif direction=="down":
-            self.globaldirection="down"
-            self.globalnode=node2
-            self.bestpicarraytemp=padded1
-            return self.scoreforbottom(padded1[pair1[0], pair1[1]].pic, temp[pair2[0], pair2[1]].pic,node2, temp[pair2[0], pair2[1]], padded1[pair1[0], pair1[1]], currentround)
-        elif direction=="up":
-            self.globaldirection="up"
-            self.globalnode=node2
-            self.bestpicarraytemp=padded1
-            return self.scorefortop(padded1[pair1[0], pair1[1]].pic, temp[pair2[0], pair2[1]].pic,node2,temp[pair2[0], pair2[1]], padded1[pair1[0], pair1[1]], currentround)
+        if direction == JoinDirection.RIGHT:
+            self.best_connection_to_compare=BestConnection(padded1, JoinDirection.RIGHT, compare_segment, binary_matrix)
+            return self.score_dict[JoinDirection.RIGHT,temp[pair2[0], pair2[1]]]
+        elif direction == JoinDirection.LEFT:
+            self.best_connection_to_compare=BestConnection(padded1, JoinDirection.LEFT, compare_segment, binary_matrix)
+            return self.score_dict[JoinDirection.LEFT, temp[pair2[0], pair2[1]]]
+        elif direction == JoinDirection.DOWN:
+            self.best_connection_to_compare=BestConnection(padded1, JoinDirection.DOWN, compare_segment, binary_matrix)
+            return self.score_dict[JoinDirection.DOWN, temp[pair2[0], pair2[1]]]
+        elif direction == JoinDirection.UP:
+            self.best_connection_to_compare=BestConnection(padded1, JoinDirection.UP, compare_segment, binary_matrix)
+            return self.score_dict[JoinDirection.UP, temp[pair2[0], pair2[1]]]
 
 
     def calculateConnections(self, compare_segment):
@@ -111,7 +131,7 @@ class Segment:
         pad_with_piece1 = np.zeros((h1+2*h2, w1+2*w2))
         pad_with_piece1[h2:(h2+h1),w2:(w2+w1)] = self.binary_connection_matrix
         dilation_mask = np.asarray([[0,1,0], [1,1,1,], [0,1,0]])
-        result = binary_dilation(input=pad_with_piece1,structure=dilation_mask)
+        result = binary_dilation(input = pad_with_piece1,structure=dilation_mask)
         neighboring_connections = result - pad_with_piece1
         for x in range(h1+2*h2-(h2-1)):
             for y in range(w1+2*w2-(w2-1)):
@@ -129,19 +149,24 @@ class Segment:
                     numofcompar = 0
                     for i in range(0,len(store[0])):
                         temp = [store[0][i], store[1][i]] 
-                        if pad_with_piece2[temp[0]][temp[1]+1]==1:
+                        if pad_with_piece2[temp[0]][temp[1]+1] == 1:
                            numofcompar+=1
-                           score += self.score_dict[JoinDirection.LEFT,compare_segment.pic_connection_matix[temp[0], temp[1]]]
-                        if pad_with_piece2[temp[0]][temp[1]-1]==1:
+                           score+=self.getscore( (connect_map.nonzero()[0][0], connect_map.nonzero()[1][0]), JoinDirection.LEFT, compare_segment, x, y, combined_pieces)#down of the first one
+                        if pad_with_piece2[temp[0]][temp[1]-1] == 1:
                            numofcompar+=1
-                           score += self.score_dict[JoinDirection.RIGHT,compare_segment.pic_connection_matix[temp[0], temp[1]]]
-                        if pad_with_piece2[temp[0]+1][temp[1]]==1:
+                           score+=self.getscore( (connect_map.nonzero()[0][0], connect_map.nonzero()[1][0]), JoinDirection.RIGHT, compare_segment, x, y, combined_pieces)#down of the first one
+                        if pad_with_piece2[temp[0]+1][temp[1]] == 1:
                            numofcompar+=1
-                           #score+=(self.getscore(temp, (connect_map.nonzero()[0][0], connect_map.nonzero()[1][0]),pad_with_piece1,pad_with_piece2,"up",node2, x, y,i,currentround))#down of the first one
-                        if pad_with_piece2[temp[0]-1][temp[1]]==1:
+                           score+=self.getscore( (connect_map.nonzero()[0][0], connect_map.nonzero()[1][0]), JoinDirection.UP, compare_segment, x, y, combined_pieces)#down of the first one
+                        if pad_with_piece2[temp[0]-1][temp[1]] == 1:
                            numofcompar+=1
-                           #score+=(self.getscore(temp, (connect_map.nonzero()[0][0], connect_map.nonzero()[1][0]),pad_with_piece1,pad_with_piece2,"down",node2, x,y, i,currentround)) #up of the first one       
-    
+                           score+=self.getscore( (connect_map.nonzero()[0][0], connect_map.nonzero()[1][0]), JoinDirection.DOWN, compare_segment, x,y, combined_pieces) #up of the first one       
+                    score/=numofcompar
+                    self.best_connection_to_compare.score=score
+                    if self.best_connection_to_compare.isBetterConnection(self.best_connection_found_so_far):
+                        self.best_connection_found_so_far=self.best_connection_to_compare
+        return self.best_connection_found_so_far                
+                
 
 def setUpArguments():
     parser = argparse.ArgumentParser()
@@ -178,15 +203,37 @@ def calculateScores(segment_list):
         for segment2 in segment_list:
             segment1.calculateScore(segment2)
 
+def findBestConnection(segment_list):
+    best_so_far=BestConnection()
+    for index, segment1 in enumerate(segment_list):
+        for segment2 in segment_list[index+1:]:
+             temp=segment1.calculateConnections(segment2)
+             if temp.isBetterConnection(best_so_far):
+                 best_so_far = temp
+                 best_so_far.own_segment = segment1
+                 best_so_far.join_segment = segment2
+    return best_so_far             
+def printPiecesMatrices(segment_list):
+    for node in segment_list:
+        print(node.binary_connection_matrix)
+        print(node.pic_connection_matix)
+    print('\n\n\n')    
+
 def main():
     parser = setUpArguments()
     segment_list = breakUpImage(parser.pic, parser.number,parser.save)
     calculateScores(segment_list)
-    for segment1 in segment_list:
-        for segment2 in segment_list:
-            segment1.calculateConnections(segment2)
-    print("I STILL WORK")
+    random.shuffle(segment_list)
+    while len(segment_list)>1:
+        printPiecesMatrices(segment_list)
+        best_connection=findBestConnection(segment_list)
+        #print(best_connection.pic_connection_matix)
+        segment_list.remove(best_connection.join_segment)
+        best_connection.setNodeContents(segment_list)
 
+    printPiecesMatrices(segment_list)
+    print("I STILL WORK")
+   
 
 if __name__ == '__main__':
     main()
