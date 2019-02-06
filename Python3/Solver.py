@@ -5,6 +5,7 @@ import sys
 from scipy import misc
 from enum import Enum
 from scipy.ndimage.morphology import binary_dilation
+round = 1
 
 class JoinDirection(Enum):
     UP = 1
@@ -176,7 +177,6 @@ def setUpArguments():
     return parser.parse_args() 
 
 def breakUpImage(image,length,save_segments):
-    image = misc.imread(image)
     dimensions = image.shape
     if dimensions[0] != dimensions[1]:
         print("Only square images will work for now to keep things simple")
@@ -212,27 +212,52 @@ def findBestConnection(segment_list):
                  best_so_far = temp
                  best_so_far.own_segment = segment1
                  best_so_far.join_segment = segment2
-    return best_so_far             
+    print(" I found the best score of ",best_so_far.score)             
+    return best_so_far   
+
 def printPiecesMatrices(segment_list):
     for node in segment_list:
         print(node.binary_connection_matrix)
         print(node.pic_connection_matix)
-    print('\n\n\n')    
+    print('\n\n\n') 
+
+def saveImage(best_connection,image,peice_size):
+    x= best_connection.binary_connection_matrix.shape[0]
+    y = best_connection.binary_connection_matrix.shape[1]
+    new_image=np.zeros((x*peice_size, y*peice_size, 3))
+    pic_locations = best_connection.binary_connection_matrix.nonzero()
+    print(best_connection.binary_connection_matrix)
+    print(best_connection.pic_connection_matix)
+    for x in range(len(pic_locations[0])):
+        piece_to_assemble = best_connection.pic_connection_matix[pic_locations[0][x], pic_locations[1][x]].pic_matrix
+        x1 = pic_locations[0][x]*peice_size
+        x2 = (pic_locations[0][x]+1)*peice_size
+        y1 = pic_locations[1][x]*peice_size
+        y2 = (pic_locations[1][x]+1)*peice_size
+        print(pic_locations[0][x], pic_locations[1][x])
+        print(x1, x2, y1, y2)
+        print(new_image[x1:x2, y1:y2, :].shape)
+        print(new_image.shape)
+        new_image[x1:x2, y1:y2, :] = piece_to_assemble
+    misc.imsave("dude.png", new_image)
+ 
 
 def main():
     parser = setUpArguments()
-    segment_list = breakUpImage(parser.pic, parser.number,parser.save)
+    image = misc.imread(parser.pic)
+    segment_list = breakUpImage(image, parser.number,parser.save)
     calculateScores(segment_list)
     random.shuffle(segment_list)
     while len(segment_list)>1:
-        printPiecesMatrices(segment_list)
+        #printPiecesMatrices(segment_list)
         best_connection=findBestConnection(segment_list)
         #print(best_connection.pic_connection_matix)
         segment_list.remove(best_connection.join_segment)
         best_connection.setNodeContents(segment_list)
+        saveImage(best_connection, image, parser.number)
 
-    printPiecesMatrices(segment_list)
-    print("I STILL WORK")
+    #printPiecesMatrices(segment_list)
+    #print("I STILL WORK")
    
 
 if __name__ == '__main__':
