@@ -5,7 +5,6 @@ import sys
 from scipy import misc
 from enum import Enum
 from scipy.ndimage.morphology import binary_dilation
-round = 1
 
 class JoinDirection(Enum):
     UP = 1
@@ -64,6 +63,7 @@ class Segment:
         compare_top = segment.pic_matrix[0:1, :, :]
         compare_left = segment.pic_matrix[:, 0:1, :]
         compare_bottom = segment.pic_matrix[segment.pic_matrix.shape[0]-1:segment.pic_matrix.shape[0],: , :]
+        
         compare_right = segment.pic_matrix[: ,segment.pic_matrix.shape[0]-1:segment.pic_matrix.shape[0], :]
         self.score_dict[JoinDirection.UP,segment] = np.linalg.norm(self_top-compare_bottom)
         self.score_dict[JoinDirection.DOWN, segment] = np.linalg.norm(self_bottom-compare_top)
@@ -124,7 +124,7 @@ class Segment:
             return self.score_dict[JoinDirection.UP, temp[pair2[0], pair2[1]]]
 
 
-    def calculateConnections(self, compare_segment):
+    def calculateConnections(self, compare_segment, round):
         h1 = self.binary_connection_matrix.shape[0]
         w1 = self.binary_connection_matrix.shape[1]
         h2 = compare_segment.binary_connection_matrix.shape[0]
@@ -164,6 +164,9 @@ class Segment:
                            score+=self.getscore( (connect_map.nonzero()[0][0], connect_map.nonzero()[1][0]), JoinDirection.DOWN, compare_segment, x,y, combined_pieces) #up of the first one       
                     score/=numofcompar
                     self.best_connection_to_compare.score=score
+                    print("i get score of ",score, "my file is called ", round)
+                    saveImage(self.best_connection_to_compare,480, round)
+                    round+=100
                     if self.best_connection_to_compare.isBetterConnection(self.best_connection_found_so_far):
                         self.best_connection_found_so_far=self.best_connection_to_compare
         return self.best_connection_found_so_far                
@@ -171,9 +174,10 @@ class Segment:
 
 def setUpArguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-p", "--pic", action="store", help="add picture you want to run on", required = True)
-    parser.add_argument("-s", "--save", action="store_true", help="do you want the broken up peices save", default=False)
-    parser.add_argument("-n", "--number", action="store", type=int, help="size of square segments wanted",required = True)
+    parser.add_argument("-i", "--inputpic", action = "store", help="add picture you want to run on", required = True)
+    parser.add_argument("-sp", "--savepieces", action = "store_true", help="save the pieces the picture was broken up into", default = False)
+    parser.add_argument("-l", "--length", action = "store", type = int, help="size of the length of square segments wanted in pixels",required = True)
+    parser.add_argument("-sa", "--saveassembly", action = "store_true", help="save the assembled picture in each round", default = False)
     return parser.parse_args() 
 
 def breakUpImage(image,length,save_segments):
@@ -205,9 +209,11 @@ def calculateScores(segment_list):
 
 def findBestConnection(segment_list):
     best_so_far=BestConnection()
+    round=1
     for index, segment1 in enumerate(segment_list):
         for segment2 in segment_list[index+1:]:
-             temp=segment1.calculateConnections(segment2)
+             temp=segment1.calculateConnections(segment2,round)
+             round+=1
              if temp.isBetterConnection(best_so_far):
                  best_so_far = temp
                  best_so_far.own_segment = segment1
@@ -219,45 +225,45 @@ def printPiecesMatrices(segment_list):
     for node in segment_list:
         print(node.binary_connection_matrix)
         print(node.pic_connection_matix)
-    print('\n\n\n') 
+    print('\n\n\n')
 
-def saveImage(best_connection,image,peice_size):
+def resetConnection(my_list):
+    for connection in my_list:
+        connection.best_connection_found_so_far=BestConnection()
+        connection.best_connection_to_compare=BestConnection()        
+
+def saveImage(best_connection,peice_size, round):
     x= best_connection.binary_connection_matrix.shape[0]
     y = best_connection.binary_connection_matrix.shape[1]
     new_image=np.zeros((x*peice_size, y*peice_size, 3))
     pic_locations = best_connection.binary_connection_matrix.nonzero()
-    print(best_connection.binary_connection_matrix)
-    print(best_connection.pic_connection_matix)
     for x in range(len(pic_locations[0])):
         piece_to_assemble = best_connection.pic_connection_matix[pic_locations[0][x], pic_locations[1][x]].pic_matrix
         x1 = pic_locations[0][x]*peice_size
         x2 = (pic_locations[0][x]+1)*peice_size
         y1 = pic_locations[1][x]*peice_size
         y2 = (pic_locations[1][x]+1)*peice_size
-        print(pic_locations[0][x], pic_locations[1][x])
-        print(x1, x2, y1, y2)
-        print(new_image[x1:x2, y1:y2, :].shape)
-        print(new_image.shape)
         new_image[x1:x2, y1:y2, :] = piece_to_assemble
-    misc.imsave("dude.png", new_image)
+    misc.imsave("round"+str(round)+".png", new_image)
  
 
 def main():
     parser = setUpArguments()
-    image = misc.imread(parser.pic)
-    segment_list = breakUpImage(image, parser.number,parser.save)
+    image = misc.imread(parser.inputpic)
+    segment_list = breakUpImage(image, parser.length,parser.savepieces)
     calculateScores(segment_list)
-    random.shuffle(segment_list)
+    #random.shuffle(segment_list)
+    round = 1
     while len(segment_list)>1:
-        #printPiecesMatrices(segment_list)
         best_connection=findBestConnection(segment_list)
-        #print(best_connection.pic_connection_matix)
         segment_list.remove(best_connection.join_segment)
         best_connection.setNodeContents(segment_list)
-        saveImage(best_connection, image, parser.number)
+        if parser.saveassembly:
+            saveImage(best_connection, parser.length, round)
+        round += 1
+        resetConnection(segment_list)
+        return
 
-    #printPiecesMatrices(segment_list)
-    #print("I STILL WORK")
    
 
 if __name__ == '__main__':
