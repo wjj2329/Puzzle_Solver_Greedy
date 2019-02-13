@@ -58,23 +58,31 @@ class Segment:
         self.piece_number = piece_number
 
     def euclideanDistance(self, a, b):
-        temp = [np.linalg.norm(x-y) for x, y in zip(a, b)]
-        return sum(temp)/len(temp)
+        a=a[0].astype(np.int16) #underflows would occur without this
+        b=b[0].astype(np.int16)
+        temp = [np.linalg.norm(x[0]-y[0])+np.linalg.norm(x[1]-y[1])+np.linalg.norm(x[2]-y[2]) for x, y in zip(a, b)]
+        return sum(temp)
 
     def calculateScore(self, segment, distanceMetric=DistanceMetric.EUCLIDEAN):
+        rot = np.rot90(self.pic_matrix)
         self_top = self.pic_matrix[0:1, :, :]
-        self_left = self.pic_matrix[:, 0:1, :]
+        self_left = rot[self.pic_matrix.shape[0]-1:self.pic_matrix.shape[0], :, :]
         self_bottom = self.pic_matrix[self.pic_matrix.shape[0]-1:self.pic_matrix.shape[0], :, :]
-        self_right = self.pic_matrix[:,self.pic_matrix.shape[0]-1:self.pic_matrix.shape[0], :]
+        self_right = rot[0:1, :, :]
+
+        rot=np.rot90(segment.pic_matrix)
         compare_top = segment.pic_matrix[0:1, :, :]
-        compare_left = segment.pic_matrix[:, 0:1, :]
+        compare_left = rot[segment.pic_matrix.shape[0]-1:segment.pic_matrix.shape[0],:, :]
         compare_bottom = segment.pic_matrix[segment.pic_matrix.shape[0]-1:segment.pic_matrix.shape[0],: , :]
-        
-        compare_right = segment.pic_matrix[: ,segment.pic_matrix.shape[0]-1:segment.pic_matrix.shape[0], :]
-        self.score_dict[JoinDirection.UP,segment] = self.euclideanDistance(self_top,compare_bottom)
-        self.score_dict[JoinDirection.DOWN, segment] = self.euclideanDistance(self_bottom,compare_top)
-        self.score_dict[JoinDirection.LEFT, segment] = self.euclideanDistance(self_left , compare_right)
-        self.score_dict[JoinDirection.RIGHT, segment] = self.euclideanDistance(self_right,compare_left) 
+        compare_right =rot[0:1, :, :] 
+        #print("I place up for segment ", self.piece_number, " with ", segment.piece_number, " with score ",self.euclideanDistance(self_top,compare_bottom) )        
+        #print("I place down for segment ", self.piece_number, " with ", segment.piece_number, " with score ",self.euclideanDistance(self_bottom,compare_top) )        
+        #print("I place left for segment ", self.piece_number, " with ", segment.piece_number, " with score ",self.euclideanDistance(self_left , compare_right) )        
+        #print("I place right for segment ", self.piece_number, " with ", segment.piece_number, " with score ",self.euclideanDistance(self_right,compare_left) )          
+        self.score_dict[segment.piece_number,JoinDirection.UP,self.piece_number] = self.euclideanDistance(self_top,compare_bottom)
+        self.score_dict[segment.piece_number,JoinDirection.DOWN, self.piece_number] = self.euclideanDistance(self_bottom,compare_top)
+        self.score_dict[segment.piece_number,JoinDirection.LEFT, self.piece_number] = self.euclideanDistance(self_left , compare_right)
+        self.score_dict[segment.piece_number,JoinDirection.RIGHT, self.piece_number] = self.euclideanDistance(self_right,compare_left) 
 
     def checkforcompatibility(self, booleanarray):
         whattokeep=np.nonzero(booleanarray)
@@ -116,18 +124,19 @@ class Segment:
             padded1[pair2[0]+distancex][pair2[1]+distancey] = temp[storeing[0], storeing[1]]
         if temp[pair2[0], pair2[1]] == 0 or padded1[pair2[0], pair2[1]] == 0:
             raise ValueError('SOMETHING WENT WRONG')
+        #print("I am ", self.piece_number," ",temp[pair2[0], pair2[1]].piece_number)
         if direction == JoinDirection.RIGHT:
             self.best_connection_to_compare=BestConnection(padded1, JoinDirection.LEFT, compare_segment, binary_matrix)
-            return self.score_dict[JoinDirection.RIGHT,temp[pair2[0], pair2[1]]]
+            return self.score_dict[self.piece_number,JoinDirection.RIGHT,temp[pair2[0], pair2[1]].piece_number]
         elif direction == JoinDirection.LEFT:
             self.best_connection_to_compare=BestConnection(padded1, JoinDirection.RIGHT, compare_segment, binary_matrix)
-            return self.score_dict[JoinDirection.LEFT, temp[pair2[0], pair2[1]]]
+            return self.score_dict[self.piece_number,JoinDirection.LEFT, temp[pair2[0], pair2[1]].piece_number]
         elif direction == JoinDirection.DOWN:
             self.best_connection_to_compare=BestConnection(padded1, JoinDirection.UP, compare_segment, binary_matrix)
-            return self.score_dict[JoinDirection.DOWN, temp[pair2[0], pair2[1]]]
+            return self.score_dict[self.piece_number,JoinDirection.DOWN, temp[pair2[0], pair2[1]].piece_number]
         elif direction == JoinDirection.UP:
             self.best_connection_to_compare=BestConnection(padded1, JoinDirection.DOWN, compare_segment, binary_matrix)
-            return self.score_dict[JoinDirection.UP, temp[pair2[0], pair2[1]]]
+            return self.score_dict[self.piece_number,JoinDirection.UP, temp[pair2[0], pair2[1]].piece_number]
     def printPictureNumberMatrix(self,matrix):
         for row in matrix:
              for val in row:
@@ -137,6 +146,7 @@ class Segment:
                      print(val.piece_number,end=" ")   
              print()
 
+ 
     def calculateConnections(self, compare_segment, round):
         h1 = self.binary_connection_matrix.shape[0]
         w1 = self.binary_connection_matrix.shape[1]
@@ -177,10 +187,10 @@ class Segment:
                            score+=self.getscore( (connect_map.nonzero()[0][0], connect_map.nonzero()[1][0]), JoinDirection.DOWN, compare_segment, x,y, combined_pieces) #up of the first one       
                     score/=numofcompar
                     self.best_connection_to_compare.score=score
-                    print("i get score of ",score, "my file is called ", round)
-                    self.printPictureNumberMatrix(self.best_connection_to_compare.pic_connection_matix)
-                    saveImage(self.best_connection_to_compare,480, round)
-                    round+=100
+                    #print("i get score of ",score, "my file is called ", round)
+                    #self.printPictureNumberMatrix(self.best_connection_to_compare.pic_connection_matix)
+                    #saveImage(self.best_connection_to_compare,480, round)
+                    #round+=100
                     if self.best_connection_to_compare.isBetterConnection(self.best_connection_found_so_far):
                         self.best_connection_found_so_far=self.best_connection_to_compare
         return self.best_connection_found_so_far                
@@ -221,7 +231,8 @@ def breakUpImage(image,length,save_segments):
 def calculateScores(segment_list):
     for segment1 in segment_list:
         for segment2 in segment_list:
-            segment1.calculateScore(segment2)
+            if segment1 != segment2:
+                segment1.calculateScore(segment2)
 
 def findBestConnection(segment_list):
     best_so_far=BestConnection()
@@ -278,7 +289,7 @@ def main():
             saveImage(best_connection, parser.length, round)
         round += 1
         resetConnection(segment_list)
-        return
+        #return
 
    
 
