@@ -260,16 +260,22 @@ def resetConnection(my_list):
         connection.best_connection_to_compare=BestConnection()        
 
 def saveImage(best_connection,peice_size, round):
-    x= best_connection.binary_connection_matrix.shape[0]
-    y = best_connection.binary_connection_matrix.shape[1]
-    new_image=np.zeros((x*peice_size, y*peice_size, 3))
-    pic_locations = best_connection.binary_connection_matrix.nonzero()
+    pic_locations=best_connection.binary_connection_matrix.nonzero()
+    biggest=max(pic_locations[0]) if max(pic_locations[0])>max(pic_locations[1]) else max(pic_locations[1])
+    smallest=min(pic_locations[0]) if min(pic_locations[0])<min(pic_locations[1])else min(pic_locations[1])
+    sizex=(max(pic_locations[0])-min(pic_locations[0]))+1
+    sizey=(max(pic_locations[1])-min(pic_locations[1]))+1    
+    print("my size x is ", sizex, " my size y is ", sizey)
+    biggest_dim= sizex if sizex>sizey else sizey
+    new_image=np.zeros((biggest_dim*peice_size, biggest_dim*peice_size, 3))
     for x in range(len(pic_locations[0])):
         piece_to_assemble = best_connection.pic_connection_matix[pic_locations[0][x], pic_locations[1][x]].pic_matrix
-        x1 = pic_locations[0][x]*peice_size
-        x2 = (pic_locations[0][x]+1)*peice_size
-        y1 = pic_locations[1][x]*peice_size
-        y2 = (pic_locations[1][x]+1)*peice_size
+        print(pic_locations)
+        x1 = (pic_locations[0][x]-min(pic_locations[0]))*peice_size
+        y1 = (pic_locations[1][x]-min(pic_locations[1]))*peice_size
+        x2 = x1+peice_size
+        y2 = y1+peice_size
+        print("these are the dimensions ",x1, x2, y1, y2, new_image.shape)
         new_image[x1:x2, y1:y2, :] = piece_to_assemble
     misc.imsave("round"+str(round)+".png", new_image)
  
