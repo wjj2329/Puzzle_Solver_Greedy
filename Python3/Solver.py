@@ -36,7 +36,10 @@ class BestConnection:
         my_list.remove(self.own_segment)
         self.own_segment.pic_connection_matix = self.pic_connection_matix
         self.own_segment.binary_connection_matrix = self.binary_connection_matrix
-        my_list.append(self.own_segment) 
+        my_list.append(self.own_segment)
+    def stripZeros(self):
+        self.pic_connection_matix = self.pic_connection_matix[~np.all(self.pic_connection_matix == 0, axis=1)]
+        self.binary_connection_matrix = self.binary_connection_matrix[~np.all(self.binary_connection_matrix == 0, axis=1)]  
 
 
 class Segment:
@@ -265,17 +268,15 @@ def saveImage(best_connection,peice_size, round):
     smallest=min(pic_locations[0]) if min(pic_locations[0])<min(pic_locations[1])else min(pic_locations[1])
     sizex=(max(pic_locations[0])-min(pic_locations[0]))+1
     sizey=(max(pic_locations[1])-min(pic_locations[1]))+1    
-    print("my size x is ", sizex, " my size y is ", sizey)
     biggest_dim= sizex if sizex>sizey else sizey
     new_image=np.zeros((biggest_dim*peice_size, biggest_dim*peice_size, 3))
     for x in range(len(pic_locations[0])):
         piece_to_assemble = best_connection.pic_connection_matix[pic_locations[0][x], pic_locations[1][x]].pic_matrix
-        print(pic_locations)
+        #print(pic_locations)
         x1 = (pic_locations[0][x]-min(pic_locations[0]))*peice_size
         y1 = (pic_locations[1][x]-min(pic_locations[1]))*peice_size
         x2 = x1+peice_size
         y2 = y1+peice_size
-        print("these are the dimensions ",x1, x2, y1, y2, new_image.shape)
         new_image[x1:x2, y1:y2, :] = piece_to_assemble
     misc.imsave("round"+str(round)+".png", new_image)
  
@@ -289,6 +290,9 @@ def main():
     round = 1
     while len(segment_list)>1:
         best_connection=findBestConnection(segment_list)
+        print(best_connection.binary_connection_matrix.shape)
+        print(best_connection.pic_connection_matix.shape)
+        best_connection.stripZeros()
         segment_list.remove(best_connection.join_segment)
         best_connection.setNodeContents(segment_list)
         if parser.saveassembly:
