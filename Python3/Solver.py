@@ -39,8 +39,14 @@ class BestConnection:
         my_list.append(self.own_segment)
     def stripZeros(self):
         self.pic_connection_matix = self.pic_connection_matix[~np.all(self.pic_connection_matix == 0, axis=1)]
-        self.binary_connection_matrix = self.binary_connection_matrix[~np.all(self.binary_connection_matrix == 0, axis=1)]  
+        self.binary_connection_matrix = self.binary_connection_matrix[~np.all(self.binary_connection_matrix == 0, axis=1)]
+        idx = np.argwhere(np.all(self.pic_connection_matix[..., :] == 0, axis=0))
+        self.pic_connection_matix = np.delete(self.pic_connection_matix, idx, axis=1)
+        idx = np.argwhere(np.all(self.binary_connection_matrix[..., :] == 0, axis=0))
+        self.binary_connection_matrix = np.delete(self.binary_connection_matrix, idx, axis=1)  
 
+
+#malhnobis and different color spaces to try out. 
 
 class Segment:
     pic_matrix=None
@@ -63,7 +69,7 @@ class Segment:
     def euclideanDistance(self, a, b):
         a=a[0].astype(np.int16) #underflows would occur without this
         b=b[0].astype(np.int16)
-        temp = [np.linalg.norm(x[0]-y[0])+np.linalg.norm(x[1]-y[1])+np.linalg.norm(x[2]-y[2]) for x, y in zip(a, b)]
+        temp = [np.linalg.norm(x-y) for x, y in zip(a, b)]
         return sum(temp)
 
     def calculateScore(self, segment, distanceMetric=DistanceMetric.EUCLIDEAN):
@@ -141,6 +147,10 @@ class Segment:
             self.best_connection_to_compare=BestConnection(padded1, JoinDirection.DOWN, compare_segment, binary_matrix)
             return self.score_dict[self.piece_number,JoinDirection.UP, temp[pair2[0], pair2[1]].piece_number]
     def printPictureNumberMatrix(self,matrix):
+        matrix=matrix[~np.all(matrix == 0, axis=1)]
+        idx = np.argwhere(np.all(matrix[..., :] == 0, axis=0))
+        matrix = np.delete(matrix, idx, axis=1)
+
         for row in matrix:
              for val in row:
                 if val == 0:    
@@ -190,8 +200,14 @@ class Segment:
                            score+=self.getscore( (connect_map.nonzero()[0][0], connect_map.nonzero()[1][0]), JoinDirection.DOWN, compare_segment, x,y, combined_pieces) #up of the first one       
                     score/=numofcompar
                     self.best_connection_to_compare.score=score
-                    #print("i get score of ",score, "my file is called ", round)
-                    #self.printPictureNumberMatrix(self.best_connection_to_compare.pic_connection_matix)
+                    if round==12:
+                        print("my self I am ")
+                        self.printPictureNumberMatrix(self.pic_connection_matix)
+                        print("what I am comparing too")
+                        self.printPictureNumberMatrix(compare_segment.pic_connection_matix)
+                        print("i get score of ",score)
+                        self.printPictureNumberMatrix(self.best_connection_to_compare.pic_connection_matix)
+            
                     #saveImage(self.best_connection_to_compare,480, round)
                     #round+=100
                     if self.best_connection_to_compare.isBetterConnection(self.best_connection_found_so_far):
@@ -237,13 +253,11 @@ def calculateScores(segment_list):
             if segment1 != segment2:
                 segment1.calculateScore(segment2)
 
-def findBestConnection(segment_list):
+def findBestConnection(segment_list, round):
     best_so_far=BestConnection()
-    round=1
     for index, segment1 in enumerate(segment_list):
         for segment2 in segment_list[index+1:]:
-             temp=segment1.calculateConnections(segment2,round)
-             round+=1
+             temp=segment1.calculateConnections(segment2, round)
              if temp.isBetterConnection(best_so_far):
                  best_so_far = temp
                  best_so_far.own_segment = segment1
@@ -286,12 +300,10 @@ def main():
     image = misc.imread(parser.inputpic)
     segment_list = breakUpImage(image, parser.length,parser.savepieces)
     calculateScores(segment_list)
-    #random.shuffle(segment_list)
-    round = 1
+    #random.shuffle(segment_list)   result should NEVER Change because of this.  Something is wrong with the code :(
+    round = 0
     while len(segment_list)>1:
-        best_connection=findBestConnection(segment_list)
-        print(best_connection.binary_connection_matrix.shape)
-        print(best_connection.pic_connection_matix.shape)
+        best_connection=findBestConnection(segment_list, round)
         best_connection.stripZeros()
         segment_list.remove(best_connection.join_segment)
         best_connection.setNodeContents(segment_list)
@@ -299,6 +311,7 @@ def main():
             saveImage(best_connection, parser.length, round)
         round += 1
         resetConnection(segment_list)
+        print("for round ", round)
         #return
 
    
