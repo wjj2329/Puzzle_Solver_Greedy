@@ -18,14 +18,13 @@ class DistanceMetric(Enum):
 
 class BestConnection:
     pic_connection_matix = None
-    join_direction = None
     join_segment = None
     score = sys.maxsize
     own_segment = None
     binary_connection_matrix = None
 
-    def __init__(self, pic_connection_matix=None, join_direction=None, join_segment=None, binary_connection_matrix=None):
-        self.join_direction = join_direction
+    def __init__(self,own_segment=None, pic_connection_matix=None, join_segment=None, binary_connection_matrix=None):
+        self.own_segment=own_segment
         self.pic_connection_matix = pic_connection_matix
         self.join_segment = join_segment
         self.binary_connection_matrix = binary_connection_matrix
@@ -84,10 +83,10 @@ class Segment:
         compare_left = rot[segment.pic_matrix.shape[0]-1:segment.pic_matrix.shape[0],:, :]
         compare_bottom = segment.pic_matrix[segment.pic_matrix.shape[0]-1:segment.pic_matrix.shape[0],: , :]
         compare_right =rot[0:1, :, :] 
-        self.score_dict[segment.piece_number,JoinDirection.UP,self.piece_number] = self.euclideanDistance(self_top,compare_bottom)
-        self.score_dict[segment.piece_number,JoinDirection.DOWN, self.piece_number] = self.euclideanDistance(self_bottom,compare_top)
-        self.score_dict[segment.piece_number,JoinDirection.LEFT, self.piece_number] = self.euclideanDistance(self_left , compare_right)
-        self.score_dict[segment.piece_number,JoinDirection.RIGHT, self.piece_number] = self.euclideanDistance(self_right,compare_left) 
+        self.score_dict[self.piece_number,JoinDirection.UP,segment.piece_number] = self.euclideanDistance(self_top,compare_bottom)
+        self.score_dict[self.piece_number,JoinDirection.DOWN,segment.piece_number] = self.euclideanDistance(self_bottom,compare_top)
+        self.score_dict[self.piece_number,JoinDirection.LEFT,segment.piece_number] = self.euclideanDistance(self_left , compare_right)
+        self.score_dict[self.piece_number,JoinDirection.RIGHT,segment.piece_number] = self.euclideanDistance(self_right,compare_left) 
 
     def checkforcompatibility(self, booleanarray):
         whattokeep=np.nonzero(booleanarray)
@@ -107,40 +106,7 @@ class Segment:
             return False
         return True
     
-    def getscore(self, pair2, direction, compare_segment, r, c, binary_matrix):
-        piece1_pointer = self.pic_connection_matix
-        piece2_pointer = compare_segment.pic_connection_matix
-        h1_pointer = piece1_pointer.shape[0]
-        w1_pointer = piece1_pointer.shape[1]
-        h2_pointer = piece2_pointer.shape[0]
-        w2_pointer = piece2_pointer.shape[1]
-        oldpadded1_pointer = np.zeros( (h1_pointer+2*h2_pointer,w1_pointer+2*w2_pointer), dtype="object" )
-        padded1_pointer = np.zeros( (h1_pointer+2*h2_pointer,w1_pointer+2*w2_pointer), dtype="object" )
-        padded1_pointer[h2_pointer:(h2_pointer+h1_pointer),w2_pointer:(w2_pointer+w1_pointer)] = piece1_pointer
-        temp_pointer = np.zeros( (h1_pointer+2*h2_pointer,w1_pointer+2*w2_pointer), dtype="object"  )
-        temp_pointer[r:(h2_pointer+r),c:(w2_pointer+c)] = piece2_pointer
-        distancex = 0
-        distancey = 0
-        stuff = temp_pointer.nonzero()
-        for y in range(0, len(stuff[0])):
-            storeing = stuff[0][y],stuff[1][y]
-            distancex = storeing[0]-pair2[0]
-            distancey = storeing[1]-pair2[1]
-            padded1_pointer[pair2[0]+distancex][pair2[1]+distancey] = temp_pointer[storeing[0], storeing[1]]
-        if temp_pointer[pair2[0], pair2[1]] == 0 or padded1_pointer[pair2[0], pair2[1]] == 0:
-            raise ValueError('SOMETHING WENT WRONG')
-        if direction == JoinDirection.RIGHT:
-            self.best_connection_to_compare=BestConnection(padded1_pointer, JoinDirection.LEFT, compare_segment, binary_matrix)
-            return self.score_dict[self.piece_number,JoinDirection.RIGHT,temp_pointer[pair2[0], pair2[1]].piece_number]
-        elif direction == JoinDirection.LEFT:
-            self.best_connection_to_compare=BestConnection(padded1_pointer, JoinDirection.RIGHT, compare_segment, binary_matrix)
-            return self.score_dict[self.piece_number,JoinDirection.LEFT, temp_pointer[pair2[0], pair2[1]].piece_number]
-        elif direction == JoinDirection.DOWN:
-            self.best_connection_to_compare=BestConnection(padded1_pointer, JoinDirection.UP, compare_segment, binary_matrix)
-            return self.score_dict[self.piece_number,JoinDirection.DOWN, temp_pointer[pair2[0], pair2[1]].piece_number]
-        elif direction == JoinDirection.UP:
-            self.best_connection_to_compare=BestConnection(padded1_pointer, JoinDirection.DOWN, compare_segment, binary_matrix)
-            return self.score_dict[self.piece_number,JoinDirection.UP, temp_pointer[pair2[0], pair2[1]].piece_number]
+    
     def printPictureNumberMatrix(self,matrix):
         matrix=matrix[~np.all(matrix == 0, axis=1)]
         idx = np.argwhere(np.all(matrix[..., :] == 0, axis=0))
@@ -175,62 +141,54 @@ class Segment:
                 has_overlap = np.sum(overlap_map[:]) > 0
                 combined_pieces = pad_with_piece1+pad_with_piece2
                 if has_connections and not has_overlap and self.checkforcompatibility(combined_pieces):
-                    combined_pieces = pad_with_piece1+pad_with_piece2
                     store = np.nonzero(pad_with_piece1) 
                     score = 0 
                     numofcompar = 0
+                    padded1_pointer = np.zeros( (h1+2*h2,w1+2*w2), dtype="object" )
+                    padded1_pointer[h2:(h2+h1),w2:(w2+w1)] = self.pic_connection_matix
+                    temp_pointer=np.zeros( (h1+2*h2,w1+2*w2), dtype="object"  )
+                    temp_pointer[x:(h2+x),y:(w2+y)]=compare_segment.pic_connection_matix
+                    distancex=0
+                    distancey=0
+                    stuff=temp_pointer.nonzero()
+                    #print temp, padded1
+                    pair2=(connect_map.nonzero()[0][0], connect_map.nonzero()[1][0])
+                    for y in range(0, len(stuff[0])):
+                        storeing=stuff[0][y],stuff[1][y]
+                        distancex=storeing[0]-pair2[0]
+                        distancey=storeing[1]-pair2[1]
+                        first=pair2[0]+distancex
+                        second=pair2[1]+distancey  
+                        padded1_pointer[first][second]=temp_pointer[storeing[0], storeing[1]]
+                    self.connection_to_compare.binary_connection_matrix=combined_pieces
+                    self.connection_to_compare.pic_connection_matix=padded1_pointer
+                    self.connection_to_compare.own_segment=self
+                    self.connection_to_compare.join_segment=compare_segment                       
                     for i in range(0,len(store[0])):
-                        temp = [store[0][i], store[1][i]] 
-                        if pad_with_piece2[temp[0]][temp[1]+1] == 1:
-                           pair2=(connect_map.nonzero()[0][0], connect_map.nonzero()[1][0])
-                           numofcompar+=1
-                           score+=self.getscore( (connect_map.nonzero()[0][0], connect_map.nonzero()[1][0]), JoinDirection.LEFT, compare_segment, x, y, combined_pieces)#down of the first one
+                        temp = [store[0][i], store[1][i]]
+                        if pad_with_piece2[temp[0]][temp[1]+1] == 1:  #piece two, direction
+                           node1=padded1_pointer[temp[0], temp[1]]
+                           node2=padded1_pointer[temp[0], temp[1]+1]    
+                           score+=self.score_dict[node1.piece_number,JoinDirection.LEFT,node2.piece_number]
+                           print("piece ", node1.piece_number, " ")
                         if pad_with_piece2[temp[0]][temp[1]-1] == 1:
-                           pair2=(connect_map.nonzero()[0][0], connect_map.nonzero()[1][0])
-                           numofcompar+=1
-                           piece1_pointer = self.pic_connection_matix
-                           piece2_pointer = compare_segment.pic_connection_matix
-                           h1_pointer = piece1_pointer.shape[0]
-                           w1_pointer = piece1_pointer.shape[1]
-                           h2_pointer = piece2_pointer.shape[0]
-                           w2_pointer = piece2_pointer.shape[1]
-                           oldpadded1_pointer = np.zeros( (h1_pointer+2*h2_pointer,w1_pointer+2*w2_pointer), dtype="object" )
-                           padded1_pointer = np.zeros( (h1_pointer+2*h2_pointer,w1_pointer+2*w2_pointer), dtype="object" )
-                           padded1_pointer[h2_pointer:(h2_pointer+h1_pointer),w2_pointer:(w2_pointer+w1_pointer)] = piece1_pointer
-                           temp_pointer = np.zeros( (h1_pointer+2*h2_pointer,w1_pointer+2*w2_pointer), dtype="object"  )
-                           temp_pointer[x:(h2_pointer+x),y:(w2_pointer+y)] = piece2_pointer
-                           distancex = 0
-                           distancey = 0
-                           stuff = temp_pointer.nonzero()
-                           for something in range(0, len(stuff[0])):
-                                storeing = stuff[0][something],stuff[1][something]
-                                distancex = storeing[0]-pair2[0]
-                                distancey = storeing[1]-pair2[1]
-                                padded1_pointer[pair2[0]+distancex][pair2[1]+distancey] = temp_pointer[storeing[0], storeing[1]]
-                           if temp_pointer[pair2[0], pair2[1]] == 0 or padded1_pointer[pair2[0], pair2[1]] == 0:
-                                raise ValueError('SOMETHING WENT WRONG')
-                           self.best_connection_to_compare=BestConnection(padded1_pointer, JoinDirection.LEFT, compare_segment, compare_segment)
-                           score+=self.score_dict[self.piece_number,JoinDirection.RIGHT,temp_pointer[pair2[0], pair2[1]].piece_number]
+                           node1=padded1_pointer[temp[0], temp[1]]
+                           node2=padded1_pointer[temp[0], temp[1]-1]
+                           score+=self.score_dict[node1.piece_number,JoinDirection.RIGHT,node2.piece_number]
                         if pad_with_piece2[temp[0]+1][temp[1]] == 1:
+                           node1=padded1_pointer[temp[0], temp[1]]
+                           node2=padded1_pointer[temp[0]+1, temp[1]]
                            numofcompar+=1
-                           score+=self.getscore( (connect_map.nonzero()[0][0], connect_map.nonzero()[1][0]), JoinDirection.UP, compare_segment, x, y, combined_pieces)#down of the first one
+                           score+=self.score_dict[node1.piece_number,JoinDirection.UP,node2.piece_number]
                         if pad_with_piece2[temp[0]-1][temp[1]] == 1:
+                           node1=padded1_pointer[temp[0], temp[1]]
+                           node2=padded1_pointer[temp[0]-1, temp[1]]
                            numofcompar+=1
-                           score+=self.getscore( (connect_map.nonzero()[0][0], connect_map.nonzero()[1][0]), JoinDirection.DOWN, compare_segment, x,y, combined_pieces) #up of the first one       
-                    score/=numofcompar
-                    self.best_connection_to_compare.score=score
-                    if round==12:
-                        print("my self I am ")
-                        self.printPictureNumberMatrix(self.pic_connection_matix)
-                        print("what I am comparing too")
-                        self.printPictureNumberMatrix(compare_segment.pic_connection_matix)
-                        print("i get score of ",score)
-                        self.printPictureNumberMatrix(self.best_connection_to_compare.pic_connection_matix)
-            
-                    #saveImage(self.best_connection_to_compare,480, round)
-                    #round+=100
-                    if self.best_connection_to_compare.isBetterConnection(self.best_connection_found_so_far):
-                        self.best_connection_found_so_far=self.best_connection_to_compare
+                           score+=self.score_dict[node1.piece_number,JoinDirection.DOWN,node2.piece_number]      
+                    if score<self.best_connection_found_so_far.score:
+                        self.best_connection_found_so_far=self.connection_to_compare
+                        self.best_connection_found_so_far.score=score
+
         return self.best_connection_found_so_far                
                 
 
@@ -281,7 +239,8 @@ def findBestConnection(segment_list, round):
                  best_so_far = temp
                  best_so_far.own_segment = segment1
                  best_so_far.join_segment = segment2
-    print(" I found the best score of ",best_so_far.score)             
+    print(" I found the best score of ",best_so_far.score) 
+    print("they are segments ", best_so_far.own_segment.piece_number, " and ", best_so_far.join_segment.piece_number)            
     return best_so_far   
 
 def printPiecesMatrices(segment_list):
