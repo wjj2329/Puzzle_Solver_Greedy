@@ -170,33 +170,33 @@ class Segment:
                            node2=padded1_pointer[temp[0], temp[1]+1]    
                            score+=self.score_dict[node1.piece_number,JoinDirection.RIGHT,node2.piece_number]
                            self.connection_to_compare.direction="Right"
-                           print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " Right")
+                           print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " Right", combined_pieces)
                         if pad_with_piece2[temp[0]][temp[1]-1] == 1:
                            node1=padded1_pointer[temp[0], temp[1]]
                            node2=padded1_pointer[temp[0], temp[1]-1]
                            score+=self.score_dict[node1.piece_number,JoinDirection.LEFT,node2.piece_number]
                            self.connection_to_compare.direction="Left"
-                           print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " left")
+                           print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " left", combined_pieces)
                         if pad_with_piece2[temp[0]+1][temp[1]] == 1:
                            node1=padded1_pointer[temp[0], temp[1]]
                            node2=padded1_pointer[temp[0]+1, temp[1]]
                            numofcompar+=1
                            self.connection_to_compare.direction="Down"                           
                            score+=self.score_dict[node1.piece_number,JoinDirection.DOWN,node2.piece_number]
-                           print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " Down")
+                           print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " Down", combined_pieces)
                         if pad_with_piece2[temp[0]-1][temp[1]] == 1:
                            node1=padded1_pointer[temp[0], temp[1]]
                            node2=padded1_pointer[temp[0]-1, temp[1]]
                            numofcompar+=1
                            self.connection_to_compare.direction="up"
                            score+=self.score_dict[node1.piece_number,JoinDirection.UP,node2.piece_number]  
-                           print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " Up")    
-                    self.printPictureNumberMatrix(padded1_pointer)
+                           print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " Up", combined_pieces)    
+                    #self.printPictureNumberMatrix(padded1_pointer)
                     if score<self.best_connection_found_so_far.score:
-                        print("i find a score of ", score,self.connection_to_compare.binary_connection_matrix)
+                        #print("i find a score of ", score,self.connection_to_compare.binary_connection_matrix)
                         self.best_connection_found_so_far=self.connection_to_compare
                         self.best_connection_found_so_far.score=score
-        print('I found connection ')
+        print('I found connection ', self.best_connection_found_so_far.score, self.best_connection_found_so_far.binary_connection_matrix)
         self.printPictureNumberMatrix(self.best_connection_found_so_far.pic_connection_matix)
         return self.best_connection_found_so_far                
                 
@@ -264,9 +264,9 @@ def resetConnection(my_list):
         connection.best_connection_to_compare=BestConnection()        
 
 def saveImage(best_connection,peice_size, round):
-    print(best_connection.binary_connection_matrix)
-    print(best_connection.pic_connection_matix)
-    print(best_connection.direction)
+    #print(best_connection.binary_connection_matrix)
+   # print(best_connection.pic_connection_matix)
+    #print(best_connection.direction)
     pic_locations=best_connection.binary_connection_matrix.nonzero()
     biggest=max(pic_locations[0]) if max(pic_locations[0])>max(pic_locations[1]) else max(pic_locations[1])
     smallest=min(pic_locations[0]) if min(pic_locations[0])<min(pic_locations[1])else min(pic_locations[1])
