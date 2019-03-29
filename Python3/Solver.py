@@ -56,7 +56,6 @@ class Segment:
     max_width = 0
     max_height = 0
     best_connection_found_so_far = BestConnection()
-    connection_to_compare = BestConnection()
     piece_number =-1
 
     def __init__(self,pic_matrix, max_width, max_height, piece_number):
@@ -161,43 +160,41 @@ class Segment:
                         first=pair2[0]+distancex
                         second=pair2[1]+distancey  
                         padded1_pointer[first][second]=temp_pointer[storeing[0], storeing[1]]
-                    self.connection_to_compare.binary_connection_matrix=combined_pieces
-                    self.connection_to_compare.pic_connection_matix=padded1_pointer
+                    #print(combined_pieces, padded1_pointer)
                     for i in range(0,len(store[0])):
                         temp = [store[0][i], store[1][i]]
                         if pad_with_piece2[temp[0]][temp[1]+1] == 1:  #piece two, direction
                            node1=padded1_pointer[temp[0], temp[1]]
                            node2=padded1_pointer[temp[0], temp[1]+1]    
                            score+=self.score_dict[node1.piece_number,JoinDirection.RIGHT,node2.piece_number]
-                           self.connection_to_compare.direction="Right"
-                           print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " Right", combined_pieces)
+                           #print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " Right", combined_pieces)
                         if pad_with_piece2[temp[0]][temp[1]-1] == 1:
                            node1=padded1_pointer[temp[0], temp[1]]
                            node2=padded1_pointer[temp[0], temp[1]-1]
                            score+=self.score_dict[node1.piece_number,JoinDirection.LEFT,node2.piece_number]
-                           self.connection_to_compare.direction="Left"
-                           print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " left", combined_pieces)
+                           #print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " left", combined_pieces)
                         if pad_with_piece2[temp[0]+1][temp[1]] == 1:
                            node1=padded1_pointer[temp[0], temp[1]]
                            node2=padded1_pointer[temp[0]+1, temp[1]]
                            numofcompar+=1
-                           self.connection_to_compare.direction="Down"                           
                            score+=self.score_dict[node1.piece_number,JoinDirection.DOWN,node2.piece_number]
-                           print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " Down", combined_pieces)
+                           #print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " Down", combined_pieces)
                         if pad_with_piece2[temp[0]-1][temp[1]] == 1:
                            node1=padded1_pointer[temp[0], temp[1]]
                            node2=padded1_pointer[temp[0]-1, temp[1]]
                            numofcompar+=1
-                           self.connection_to_compare.direction="up"
                            score+=self.score_dict[node1.piece_number,JoinDirection.UP,node2.piece_number]  
-                           print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " Up", combined_pieces)    
+                           #print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " Up", combined_pieces)    
                     #self.printPictureNumberMatrix(padded1_pointer)
                     if score<self.best_connection_found_so_far.score:
                         #print("i find a score of ", score,self.connection_to_compare.binary_connection_matrix)
-                        self.best_connection_found_so_far=self.connection_to_compare
+                        self.best_connection_found_so_far.pic_connection_matix=padded1_pointer
+                        self.best_connection_found_so_far.binary_connection_matrix = combined_pieces
                         self.best_connection_found_so_far.score=score
-        print('I found connection ', self.best_connection_found_so_far.score, self.best_connection_found_so_far.binary_connection_matrix)
-        self.printPictureNumberMatrix(self.best_connection_found_so_far.pic_connection_matix)
+        #print('I found connection ', self.best_connection_found_so_far.score, self.best_connection_found_so_far.binary_connection_matrix)
+        #self.printPictureNumberMatrix(self.best_connection_found_so_far.pic_connection_matix)
+        self.best_connection_found_so_far.own_segment=self
+        self.best_connection_found_so_far.join_segment=compare_segment
         return self.best_connection_found_so_far                
                 
 
@@ -246,16 +243,16 @@ def findBestConnection(segment_list, round):
              temp=segment1.calculateConnections(segment2, round)
              if temp.isBetterConnection(best_so_far):
                  best_so_far = temp
-                 best_so_far.own_segment = segment1
-                 best_so_far.join_segment = segment2
+    print(" they are ",best_so_far.own_segment.piece_number, " ", best_so_far.join_segment.piece_number)             
     print(" I found the best score of ",best_so_far.score) 
-    print("they are segments ", best_so_far.own_segment.piece_number, " and ", best_so_far.join_segment.piece_number)            
+    print(best_so_far.pic_connection_matix)            
     return best_so_far   
 
 def printPiecesMatrices(segment_list):
     for node in segment_list:
         print(node.binary_connection_matrix)
         print(node.pic_connection_matix)
+        print(node.piece_number)
     print('\n\n\n')
 
 def resetConnection(my_list):
@@ -296,8 +293,12 @@ def main():
         best_connection=findBestConnection(segment_list, round)
         #print(best_connection.pic_connection_matix)
         best_connection.stripZeros()
-        segment_list.remove(best_connection.join_segment)
-        best_connection.setNodeContents(segment_list)
+        #segment_list.remove(best_connection.join_segment)
+        print("before ",len(segment_list))
+        print("i will remove ", best_connection.own_segment.piece_number, best_connection.join_segment.piece_number)
+        print("after", len(segment_list))
+        return
+        printPiecesMatrices(segment_list)
         if parser.saveassembly:
             saveImage(best_connection, parser.length, round)
         round += 1
