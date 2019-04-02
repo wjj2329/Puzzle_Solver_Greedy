@@ -1,8 +1,7 @@
 import argparse
 import numpy as np
 import random
-import sys
-from scipy import misc
+from imageio import imread,imsave
 from enum import Enum
 from scipy.ndimage.morphology import binary_dilation
 
@@ -151,7 +150,6 @@ class Segment:
                     distancex=0
                     distancey=0
                     stuff=temp_pointer.nonzero()
-                    #print temp, padded1
                     pair2=(connect_map.nonzero()[0][0], connect_map.nonzero()[1][0])
                     for y in range(0, len(stuff[0])):
                         storeing=stuff[0][y],stuff[1][y]
@@ -160,43 +158,35 @@ class Segment:
                         first=pair2[0]+distancex
                         second=pair2[1]+distancey  
                         padded1_pointer[first][second]=temp_pointer[storeing[0], storeing[1]]
-                    #print(combined_pieces, padded1_pointer)
                     for i in range(0,len(store[0])):
                         temp = [store[0][i], store[1][i]]
                         if pad_with_piece2[temp[0]][temp[1]+1] == 1:  #piece two, direction
                            node1=padded1_pointer[temp[0], temp[1]]
                            node2=padded1_pointer[temp[0], temp[1]+1]    
                            score+=self.score_dict[node1.piece_number,JoinDirection.RIGHT,node2.piece_number]
-                           #print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " Right", combined_pieces)
                         if pad_with_piece2[temp[0]][temp[1]-1] == 1:
                            node1=padded1_pointer[temp[0], temp[1]]
                            node2=padded1_pointer[temp[0], temp[1]-1]
                            score+=self.score_dict[node1.piece_number,JoinDirection.LEFT,node2.piece_number]
-                           #print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " left", combined_pieces)
                         if pad_with_piece2[temp[0]+1][temp[1]] == 1:
                            node1=padded1_pointer[temp[0], temp[1]]
                            node2=padded1_pointer[temp[0]+1, temp[1]]
                            numofcompar+=1
                            score+=self.score_dict[node1.piece_number,JoinDirection.DOWN,node2.piece_number]
-                           #print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " Down", combined_pieces)
                         if pad_with_piece2[temp[0]-1][temp[1]] == 1:
                            node1=padded1_pointer[temp[0], temp[1]]
                            node2=padded1_pointer[temp[0]-1, temp[1]]
                            numofcompar+=1
                            score+=self.score_dict[node1.piece_number,JoinDirection.UP,node2.piece_number]  
-                           #print("piece ", node1.piece_number, " ", node2.piece_number," ", score, " Up", combined_pieces)    
-                    #self.printPictureNumberMatrix(padded1_pointer)
                     if score<self.best_connection_found_so_far.score:
-                        #print("i find a score of ", score,self.connection_to_compare.binary_connection_matrix)
                         self.best_connection_found_so_far.pic_connection_matix=padded1_pointer
                         self.best_connection_found_so_far.binary_connection_matrix = combined_pieces
                         self.best_connection_found_so_far.score=score
-        #print('I found connection ', self.best_connection_found_so_far.score, self.best_connection_found_so_far.binary_connection_matrix)
-        #self.printPictureNumberMatrix(self.best_connection_found_so_far.pic_connection_matix)
-        self.best_connection_found_so_far.own_segment=self
-        self.best_connection_found_so_far.join_segment=compare_segment
+                        self.best_connection_found_so_far.own_segment=self
+                        self.best_connection_found_so_far.join_segment=compare_segment
         return self.best_connection_found_so_far                
                 
+
 
 def setUpArguments():
     parser = argparse.ArgumentParser()
@@ -224,7 +214,7 @@ def breakUpImage(image,length,save_segments):
             segments.append(Segment(save,dimensions[0]/length, dimensions[1]/length, piece_num))
             piece_num+=1
             if save_segments:
-                misc.imsave(str(x)+"_"+str(y)+".png", save)
+                imsave(str(x)+"_"+str(y)+".png", save)
             picY += length
         picX += length
         picY = 0
@@ -243,9 +233,6 @@ def findBestConnection(segment_list, round):
              temp=segment1.calculateConnections(segment2, round)
              if temp.isBetterConnection(best_so_far):
                  best_so_far = temp
-    print(" they are ",best_so_far.own_segment.piece_number, " ", best_so_far.join_segment.piece_number)             
-    print(" I found the best score of ",best_so_far.score) 
-    print(best_so_far.pic_connection_matix)            
     return best_so_far   
 
 def printPiecesMatrices(segment_list):
@@ -261,50 +248,39 @@ def resetConnection(my_list):
         connection.best_connection_to_compare=BestConnection()        
 
 def saveImage(best_connection,peice_size, round):
-    #print(best_connection.binary_connection_matrix)
-   # print(best_connection.pic_connection_matix)
-    #print(best_connection.direction)
     pic_locations=best_connection.binary_connection_matrix.nonzero()
-    biggest=max(pic_locations[0]) if max(pic_locations[0])>max(pic_locations[1]) else max(pic_locations[1])
-    smallest=min(pic_locations[0]) if min(pic_locations[0])<min(pic_locations[1])else min(pic_locations[1])
     sizex=(max(pic_locations[0])-min(pic_locations[0]))+1
     sizey=(max(pic_locations[1])-min(pic_locations[1]))+1    
     biggest_dim= sizex if sizex>sizey else sizey
     new_image=np.zeros((biggest_dim*peice_size, biggest_dim*peice_size, 3))
     for x in range(len(pic_locations[0])):
         piece_to_assemble = best_connection.pic_connection_matix[pic_locations[0][x], pic_locations[1][x]].pic_matrix
-        #print(pic_locations)
         x1 = (pic_locations[0][x]-min(pic_locations[0]))*peice_size
         y1 = (pic_locations[1][x]-min(pic_locations[1]))*peice_size
         x2 = x1+peice_size
         y2 = y1+peice_size
         new_image[x1:x2, y1:y2, :] = piece_to_assemble
-    misc.imsave("round"+str(round)+".png", new_image)
+    imsave("round"+str(round)+".png", new_image)
  
 
 def main():
-    parser = setUpArguments()
-    image = misc.imread(parser.inputpic)
-    segment_list = breakUpImage(image, parser.length,parser.savepieces)
+    #parser = setUpArguments()
+    image = imread("william.png")#parser.inputpic)
+    segment_list = breakUpImage(image,120, True)# parser.length,parser.savepieces)
     calculateScores(segment_list)
     #random.shuffle(segment_list)   result should NEVER Change because of this.  Something is wrong with the code :(
     round = 0
     while len(segment_list)>1:
         best_connection=findBestConnection(segment_list, round)
-        #print(best_connection.pic_connection_matix)
         best_connection.stripZeros()
-        #segment_list.remove(best_connection.join_segment)
-        print("before ",len(segment_list))
-        print("i will remove ", best_connection.own_segment.piece_number, best_connection.join_segment.piece_number)
-        print("after", len(segment_list))
-        return
+        best_connection.own_segment.binary_connection_matrix=best_connection.binary_connection_matrix
+        best_connection.own_segment.pic_connection_matix=best_connection.pic_connection_matix
+        segment_list.remove(best_connection.join_segment)
         printPiecesMatrices(segment_list)
-        if parser.saveassembly:
-            saveImage(best_connection, parser.length, round)
+        if True:#parser.saveassembly:
+            saveImage(best_connection, 120, round)
         round += 1
         resetConnection(segment_list)
-        print("for round ", round)
-        #return
 
    
 
