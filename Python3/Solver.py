@@ -82,21 +82,17 @@ class Segment:
         return sum(temp)
 
     def calculateScore(self, segment, distanceMetric=DistanceMetric.EUCLIDEAN):
-        rot = np.rot90(self.pic_matrix)
+        #rot = np.rot90(self.pic_matrix)
         self_top = self.pic_matrix[0:1, :, :]
-        self_left = rot[self.pic_matrix.shape[0] -
-                        1:self.pic_matrix.shape[0], :, :]
-        self_bottom = self.pic_matrix[self.pic_matrix.shape[0] -
-                                      1:self.pic_matrix.shape[0], :, :]
-        self_right = rot[0:1, :, :]
+        self_left = np.rot90(self.pic_matrix[:, 0:1, :])
+        self_bottom = self.pic_matrix[self.pic_matrix.shape[0] - 1:self.pic_matrix.shape[0], :, :]
+        self_right = np.rot90(self.pic_matrix[:, self.pic_matrix.shape[0]- 1:self.pic_matrix.shape[0], :])
 
-        rot = np.rot90(segment.pic_matrix)
+        #rot = np.rot90(segment.pic_matrix)
         compare_top = segment.pic_matrix[0:1, :, :]
-        compare_left = rot[segment.pic_matrix.shape[0] -
-                           1:segment.pic_matrix.shape[0], :, :]
-        compare_bottom = segment.pic_matrix[segment.pic_matrix.shape[0] -
-                                            1:segment.pic_matrix.shape[0], :, :]
-        compare_right = rot[0:1, :, :]
+        compare_left = np.rot90(segment.pic_matrix[:, 0:1, :])
+        compare_bottom = segment.pic_matrix[segment.pic_matrix.shape[0] - 1:segment.pic_matrix.shape[0], :, :]
+        compare_right = np.rot90(segment.pic_matrix[:, segment.pic_matrix.shape[0]- 1:segment.pic_matrix.shape[0], :])
         self.score_dict[self.piece_number, JoinDirection.UP,
                         segment.piece_number] = self.euclideanDistance(self_top, compare_bottom)
         self.score_dict[self.piece_number, JoinDirection.DOWN,
@@ -244,11 +240,11 @@ def breakUpImage(image, length, save_segments):
     piece_num = 1
     num_of_pieces_width = int(dimensions[0]/length)
     num_of_pieces_height = int(dimensions[1]/length)
+    append = segments.append
     for x in range(num_of_pieces_width):
         for y in range(num_of_pieces_height):
             save = image[picX: picX+length, picY: picY+length, :]
-            segments.append(
-                Segment(save, num_of_pieces_width, num_of_pieces_height, piece_num))
+            append(Segment(save, num_of_pieces_width, num_of_pieces_height, piece_num))
             piece_num += 1
             if save_segments:
                 imsave(str(x)+"_"+str(y)+".png", save)
@@ -313,7 +309,7 @@ def main():
     # parser.length,parser.savepieces)
     segment_list = breakUpImage(image, 240, True)
     calculateScores(segment_list)
-
+    
     # result should NEVER Change because of this.  Something is wrong with the code :(
     random.shuffle(segment_list)
     round = 0
