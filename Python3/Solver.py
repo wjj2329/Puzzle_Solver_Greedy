@@ -78,29 +78,34 @@ class Segment:
     def euclideanDistance(self, a, b):
         a = a[0].astype(np.int16)  # underflows would occur without this
         b = b[0].astype(np.int16)
-        temp = [np.linalg.norm(x - y) for x, y in zip(a, b)]
-        return sum(temp)
+        temp = sum([np.linalg.norm(x - y) for x, y in zip(a, b)])
+        return temp
 
-    def calculateScore(self, segment, distanceMetric=DistanceMetric.EUCLIDEAN):
-        #rot = np.rot90(self.pic_matrix)
-        self_top = self.pic_matrix[0:1, :, :]
-        self_left = np.rot90(self.pic_matrix[:, 0:1, :])
-        self_bottom = self.pic_matrix[self.pic_matrix.shape[0] - 1:self.pic_matrix.shape[0], :, :]
-        self_right = np.rot90(self.pic_matrix[:, self.pic_matrix.shape[0]- 1:self.pic_matrix.shape[0], :])
+    def calculateScore(self, segment, distanceMetric = DistanceMetric.EUCLIDEAN):
+        size = segment.pic_matrix.shape[0]
 
-        #rot = np.rot90(segment.pic_matrix)
-        compare_top = segment.pic_matrix[0:1, :, :]
-        compare_left = np.rot90(segment.pic_matrix[:, 0:1, :])
-        compare_bottom = segment.pic_matrix[segment.pic_matrix.shape[0] - 1:segment.pic_matrix.shape[0], :, :]
-        compare_right = np.rot90(segment.pic_matrix[:, segment.pic_matrix.shape[0]- 1:segment.pic_matrix.shape[0], :])
-        self.score_dict[self.piece_number, JoinDirection.UP,
-                        segment.piece_number] = self.euclideanDistance(self_top, compare_bottom)
-        self.score_dict[self.piece_number, JoinDirection.DOWN,
-                        segment.piece_number] = self.euclideanDistance(self_bottom, compare_top)
-        self.score_dict[self.piece_number, JoinDirection.LEFT,
-                        segment.piece_number] = self.euclideanDistance(self_left, compare_right)
-        self.score_dict[self.piece_number, JoinDirection.RIGHT,
-                        segment.piece_number] = self.euclideanDistance(self_right, compare_left)
+        pic_matrix = self.pic_matrix        
+        self_top = pic_matrix[0:1, :, :]
+        self_left = np.rot90(pic_matrix[:, 0:1, :])
+        self_bottom = pic_matrix[size - 1:size, :, :]
+        self_right = np.rot90(pic_matrix[:, size - 1:size, :])
+
+        segment_matrix = segment.pic_matrix
+        compare_top = segment_matrix[0:1, :, :]
+        compare_left = np.rot90(segment_matrix[:, 0:1, :])
+        compare_bottom = segment_matrix[size - 1:size, :, :]
+        compare_right = np.rot90(segment_matrix[:, size - 1:size, :])
+        
+        own_number = self.piece_number
+        join_number = segment.piece_number
+        self.score_dict[own_number, JoinDirection.UP,
+                        join_number] = self.euclideanDistance(self_top, compare_bottom)
+        self.score_dict[own_number, JoinDirection.DOWN,
+                        join_number] = self.euclideanDistance(self_bottom, compare_top)
+        self.score_dict[own_number, JoinDirection.LEFT,
+                        join_number] = self.euclideanDistance(self_left, compare_right)
+        self.score_dict[own_number, JoinDirection.RIGHT,
+                        join_number] = self.euclideanDistance(self_right, compare_left)
 
     def checkforcompatibility(self, booleanarray):
         whattokeep = np.nonzero(booleanarray)
@@ -185,11 +190,13 @@ class Segment:
                         if pad_with_piece2[temp[0]][temp[1]+1] == 1:
                             node1 = padded1_pointer[temp[0], temp[1]]
                             node2 = padded1_pointer[temp[0], temp[1]+1]
+                            numofcompar += 1
                             score += self.score_dict[node1.piece_number,
                                                      JoinDirection.RIGHT, node2.piece_number]
                         if pad_with_piece2[temp[0]][temp[1]-1] == 1:
                             node1 = padded1_pointer[temp[0], temp[1]]
                             node2 = padded1_pointer[temp[0], temp[1]-1]
+                            numofcompar += 1
                             score += self.score_dict[node1.piece_number,
                                                      JoinDirection.LEFT, node2.piece_number]
                         if pad_with_piece2[temp[0]+1][temp[1]] == 1:
@@ -204,6 +211,7 @@ class Segment:
                             numofcompar += 1
                             score += self.score_dict[node1.piece_number,
                                                      JoinDirection.UP, node2.piece_number]
+                    score=score/numofcompar                                 
                     if score < self.best_connection_found_so_far.score:
                         self.best_connection_found_so_far.pic_connection_matix = padded1_pointer
                         self.best_connection_found_so_far.binary_connection_matrix = combined_pieces
@@ -244,7 +252,8 @@ def breakUpImage(image, length, save_segments):
     for x in range(num_of_pieces_width):
         for y in range(num_of_pieces_height):
             save = image[picX: picX+length, picY: picY+length, :]
-            append(Segment(save, num_of_pieces_width, num_of_pieces_height, piece_num))
+            append(Segment(save, num_of_pieces_width,
+                           num_of_pieces_height, piece_num))
             piece_num += 1
             if save_segments:
                 imsave(str(x)+"_"+str(y)+".png", save)
@@ -307,9 +316,9 @@ def main():
     #parser = setUpArguments()
     image = imread("william.png")  # parser.inputpic)
     # parser.length,parser.savepieces)
-    segment_list = breakUpImage(image, 240, True)
+    segment_list = breakUpImage(image, 60, True)
     calculateScores(segment_list)
-    
+    #return
     # result should NEVER Change because of this.  Something is wrong with the code :(
     random.shuffle(segment_list)
     round = 0
@@ -320,7 +329,7 @@ def main():
         best_connection.own_segment.pic_connection_matix = best_connection.pic_connection_matix
         segment_list.remove(best_connection.join_segment)
         if True:  # parser.saveassembly:
-            saveImage(best_connection, 240, round)
+            saveImage(best_connection, 60, round)
         round += 1
         resetConnection(segment_list)
 
