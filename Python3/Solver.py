@@ -14,11 +14,6 @@ class JoinDirection(Enum):
     RIGHT = 4
 
 
-class DistanceMetric(Enum):
-    EUCLIDEAN = 1
-    MAHALANOBIS = 2
-
-
 class BestConnection:
     pic_connection_matix = None
     join_segment = None
@@ -81,10 +76,146 @@ class Segment:
         temp = sum([np.linalg.norm(x - y) for x, y in zip(a, b)])
         return temp
 
-    def calculateScore(self, segment, distanceMetric = DistanceMetric.EUCLIDEAN):
+    def mahalanobisDistance(self, a, a2, z, z2):
+        a = a[0].astype(np.int16)  # underflows would occur without this
+        a2 = a2[0].astype(np.int16)
+        z = z[0].astype(np.int16)
+        z2 = z2[0].astype(np.int16)
+        covariance_piece1 = np.zeros([3, 3])
+        covariance_piece2 = np.zeros([3, 3])
+
+        redav1_piece1 = np.average(a[:, 0])  # extract red blue and green
+        greenav1_piece1 = np.average(a[:, 1])
+        blueav1_piece1 = np.average(a[:, 2])
+        redav2_piece1 = np.average(a2[:, 0])
+        greenav2_piece1 = np.average(a2[:, 1])
+        blueav2_piece1 = np.average(a2[:, 2])
+
+        redav1_piece2 = np.average(z[:, 0])  # extract red blue and green
+        greenav1_piece2 = np.average(z[:, 1])
+        blueav1_piece2 = np.average(z[:, 2])
+        redav2_piece2 = np.average(z2[:, 0])
+        greenav2_piece2 = np.average(z2[:, 1])
+        blueav2_piece2 = np.average(z2[:, 2])
+
+        r1_piece1 = a[:, 0]-redav1_piece1
+        r2_piece1 = a2[:, 0]-redav2_piece1
+        g1_piece1 = a[:, 1]-greenav1_piece1
+        g2_piece1 = a2[:, 1]-greenav2_piece1
+        b1_piece1 = a[:, 2]-blueav1_piece1
+        b2_piece1 = a2[:, 2]-blueav2_piece1
+        size_piece1 = a2[:, 2].size
+        size_piece1 = size_piece1/1.0
+        r1r2_piece1 = np.dot(r1_piece1, r2_piece1)/size_piece1
+        r1g2_piece1 = np.dot(r1_piece1, g2_piece1)/size_piece1
+        r1b2_piece1 = np.dot(r1_piece1, b2_piece1)/size_piece1
+        g1g2_piece1 = np.dot(g1_piece1, g2_piece1)/size_piece1
+        g1b2_piece1 = np.dot(g1_piece1, b2_piece1)/size_piece1
+        b1b2_piece1 = np.dot(b1_piece1, b2_piece1)/size_piece1
+
+        r1_piece2 = a[:, 0]-redav1_piece2
+        r2_piece2 = a2[:, 0]-redav2_piece2
+        g1_piece2 = a[:, 1]-greenav1_piece2
+        g2_piece2 = a2[:, 1]-greenav2_piece2
+        b1_piece2 = a[:, 2]-blueav1_piece2
+        b2_piece2 = a2[:, 2]-blueav2_piece2
+        size_piece2 = a2[:, 2].size
+        size_piece2 = size_piece2/1.0
+        r1r2_piece2 = np.dot(r1_piece2, r2_piece2)/size_piece2
+        r1g2_piece2 = np.dot(r1_piece2, g2_piece2)/size_piece2
+        r1b2_piece2 = np.dot(r1_piece2, b2_piece2)/size_piece2
+        g1g2_piece2 = np.dot(g1_piece2, g2_piece2)/size_piece2
+        g1b2_piece2 = np.dot(g1_piece2, b2_piece2)/size_piece2
+        b1b2_piece2 = np.dot(b1_piece2, b2_piece2)/size_piece2
+
+        covariance_piece1[0, 0] = r1r2_piece1  # top row
+        covariance_piece1[0, 1] = r1g2_piece1
+        covariance_piece1[0, 2] = r1b2_piece1
+
+        covariance_piece1[1, 0] = r1g2_piece1  # middle row
+        covariance_piece1[1, 1] = g1g2_piece1
+        covariance_piece1[1, 2] = g1b2_piece1
+
+        covariance_piece1[2, 0] = r1b2_piece1
+        covariance_piece1[2, 1] = g1b2_piece1
+        covariance_piece1[2, 2] = b1b2_piece1
+
+        covariance_piece2[0, 0] = r1r2_piece2  # top row
+        covariance_piece2[0, 1] = r1g2_piece2
+        covariance_piece2[0, 2] = r1b2_piece2
+
+        covariance_piece2[1, 0] = r1g2_piece2  # middle row
+        covariance_piece2[1, 1] = g1g2_piece2
+        covariance_piece2[1, 2] = g1b2_piece2
+
+        covariance_piece2[2, 0] = r1b2_piece2
+        covariance_piece2[2, 1] = g1b2_piece2
+        covariance_piece2[2, 2] = b1b2_piece2
+
+        score = 0.0
+        i = 0
+        red = r1_piece1-r1_piece2
+        green = g1_piece1-g1_piece2
+        blue = b1_piece1-b1_piece2
+        redaverage = np.average(r1_piece1)
+        greenaverage = np.average(g1_piece1)
+        blueaverage = np.average(b1_piece1)
+        cov = np.linalg.inv(covariance_piece1)
+
+        red2 = r1_piece2-r1_piece1
+        green2 = g1_piece2-g1_piece1
+        blue2 = b1_piece2-b1_piece1
+        redaverage2 = np.average(r1_piece2)
+        greenaverage2 = np.average(g1_piece2)
+        blueaverage2 = np.average(b1_piece2)
+        cov2 = np.linalg.inv(covariance_piece2)
+        while i < len(red):  # change this terrible way of doing it
+            mymatrix = np.matrix(
+                [red[i]-redaverage, green[i]-greenaverage, blue[i]-blueaverage])
+            mymatrix2 = np.matrix(
+                [red2[i]-redaverage2, green2[i]-greenaverage2, blue2[i]-blueaverage2])
+            i += 1
+            score += abs(mymatrix*cov*mymatrix.T)
+            score += abs(mymatrix2*cov2*mymatrix2.T)
+        return score
+
+    def calculateScoreMahalonbis(self, segment):
+        size = segment.pic_matrix.shape[0]
+        pic_matrix = self.pic_matrix
+        self_top = pic_matrix[0:1, :, :]
+        self_top2 = pic_matrix[1:2, :, :]
+        self_left = np.rot90(pic_matrix[:, 0:1, :])
+        self_left2 = np.rot90(pic_matrix[:, 1:2, :])
+        self_bottom = pic_matrix[size - 1:size, :, :]
+        self_bottom2 = pic_matrix[size-2:size-1, :, :]
+        self_right = np.rot90(pic_matrix[:, size - 1:size, :])
+        self_right2 = np.rot90(pic_matrix[:, size - 2:size-1, :])
+
+        segment_matrix = segment.pic_matrix
+        compare_top = segment_matrix[0:1, :, :]
+        compare_top2 = segment_matrix[1:2, :, :]
+        compare_left = np.rot90(segment_matrix[:, 0:1, :])
+        compare_left2 = np.rot90(segment_matrix[:, 1:2, :])
+        compare_bottom = segment_matrix[size - 1:size, :, :]
+        compare_bottom2 = segment_matrix[size - 2:size-1, :, :]
+        compare_right = np.rot90(segment_matrix[:, size - 1:size, :])
+        compare_right2 = np.rot90(segment_matrix[:, size-2:size-1, :])
+
+        own_number = self.piece_number
+        join_number = segment.piece_number
+        self.score_dict[own_number, JoinDirection.UP,
+                        join_number] = self.mahalanobisDistance(self_top, self_top2, compare_bottom, compare_bottom2)
+        self.score_dict[own_number, JoinDirection.DOWN,
+                        join_number] = self.mahalanobisDistance(self_bottom, self_bottom2, compare_top, compare_top2)
+        self.score_dict[own_number, JoinDirection.LEFT,
+                        join_number] = self.mahalanobisDistance(self_left, self_left2, compare_right, compare_right2)
+        self.score_dict[own_number, JoinDirection.RIGHT,
+                        join_number] = self.mahalanobisDistance(self_right, self_right2, compare_left, compare_left2)
+
+    def calculateScoreEuclidean(self, segment):
         size = segment.pic_matrix.shape[0]
 
-        pic_matrix = self.pic_matrix        
+        pic_matrix = self.pic_matrix
         self_top = pic_matrix[0:1, :, :]
         self_left = np.rot90(pic_matrix[:, 0:1, :])
         self_bottom = pic_matrix[size - 1:size, :, :]
@@ -95,7 +226,7 @@ class Segment:
         compare_left = np.rot90(segment_matrix[:, 0:1, :])
         compare_bottom = segment_matrix[size - 1:size, :, :]
         compare_right = np.rot90(segment_matrix[:, size - 1:size, :])
-        
+
         own_number = self.piece_number
         join_number = segment.piece_number
         self.score_dict[own_number, JoinDirection.UP,
@@ -211,7 +342,7 @@ class Segment:
                             numofcompar += 1
                             score += self.score_dict[node1.piece_number,
                                                      JoinDirection.UP, node2.piece_number]
-                    score=score/numofcompar                                 
+                    score = score/numofcompar
                     if score < self.best_connection_found_so_far.score:
                         self.best_connection_found_so_far.pic_connection_matix = padded1_pointer
                         self.best_connection_found_so_far.binary_connection_matrix = combined_pieces
@@ -267,7 +398,7 @@ def calculateScores(segment_list):
     for segment1 in segment_list:
         for segment2 in segment_list:
             if segment1 != segment2:
-                segment1.calculateScore(segment2)
+                segment1.calculateScoreMahalonbis(segment2)
 
 
 def findBestConnection(segment_list, round):
@@ -291,7 +422,6 @@ def printPiecesMatrices(segment_list):
 def resetConnection(my_list):
     for connection in my_list:
         connection.best_connection_found_so_far = BestConnection()
-        connection.best_connection_to_compare = BestConnection()
 
 
 def saveImage(best_connection, peice_size, round):
@@ -316,20 +446,24 @@ def main():
     #parser = setUpArguments()
     image = imread("william.png")  # parser.inputpic)
     # parser.length,parser.savepieces)
-    segment_list = breakUpImage(image, 60, True)
+    segment_list = breakUpImage(image, 480, True)
     calculateScores(segment_list)
     #return
     # result should NEVER Change because of this.  Something is wrong with the code :(
     random.shuffle(segment_list)
     round = 0
     while len(segment_list) > 1:
+        # if round == 244:
+            # for seg in segment_list:
+                #b = BestConnection()
+                #saveImage(b, 60, round+500+seg.piece_num)
         best_connection = findBestConnection(segment_list, round)
         best_connection.stripZeros()
         best_connection.own_segment.binary_connection_matrix = best_connection.binary_connection_matrix
         best_connection.own_segment.pic_connection_matix = best_connection.pic_connection_matix
         segment_list.remove(best_connection.join_segment)
         if True:  # parser.saveassembly:
-            saveImage(best_connection, 60, round)
+            saveImage(best_connection, 480, round)
         round += 1
         resetConnection(segment_list)
 
