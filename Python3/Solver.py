@@ -84,6 +84,7 @@ class Segment:
         covariance_piece1 = np.zeros([3, 3])
         covariance_piece2 = np.zeros([3, 3])
 
+        dude=a[:,0]
         redav1_piece1 = np.average(a[:, 0])  # extract red blue and green
         greenav1_piece1 = np.average(a[:, 1])
         blueav1_piece1 = np.average(a[:, 2])
@@ -175,8 +176,11 @@ class Segment:
             mymatrix2 = np.matrix(
                 [red2[i]-redaverage2, green2[i]-greenaverage2, blue2[i]-blueaverage2])
             i += 1
-            score += abs(mymatrix*cov*mymatrix.T)
-            score += abs(mymatrix2*cov2*mymatrix2.T)
+            temp =abs(mymatrix*cov*mymatrix.T)
+            score += temp
+            temp2= abs(mymatrix2*cov2*mymatrix2.T)
+            score +=temp2
+            yhourm=""
         return score
 
     def calculateScoreMahalonbis(self, segment):
@@ -448,7 +452,7 @@ def main():
     # parser.length,parser.savepieces)
     segment_list = breakUpImage(image, 480, True)
     calculateScores(segment_list)
-    #return
+    # return
     # result should NEVER Change because of this.  Something is wrong with the code :(
     random.shuffle(segment_list)
     round = 0
@@ -458,6 +462,7 @@ def main():
                 #b = BestConnection()
                 #saveImage(b, 60, round+500+seg.piece_num)
         best_connection = findBestConnection(segment_list, round)
+        score = best_connection.score
         best_connection.stripZeros()
         best_connection.own_segment.binary_connection_matrix = best_connection.binary_connection_matrix
         best_connection.own_segment.pic_connection_matix = best_connection.pic_connection_matix
