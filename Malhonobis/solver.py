@@ -14,6 +14,7 @@ from scipy.optimize import linprog
 import time
 import math
 import Tkinter
+import imageio
 from PIL import ImageTk, Image
 
 parser = argparse.ArgumentParser()
@@ -22,9 +23,9 @@ parser.add_argument("-s", "--save", action="store", help="name of file you want 
 parser.add_argument("-n", "--number", action="store", type=int, help="number of segments")
 parser.add_argument("-r", "--rotate", action="store_true",help="if you want the pictures to be rotated" )
 args=parser.parse_args()
-numberofsegments=args.number
-picture= misc.imread(args.pic)  #command to grap picture we want save in array
-mylist=image_slicer.slice(args.pic, numberofsegments)#this creates all pictures that I need
+numberofsegments=4
+picture= imageio.imread("william.png")  #command to grap picture we want save in array
+mylist=image_slicer.slice("william.png", numberofsegments)#this creates all pictures that I need
 print len(mylist)
 if len(mylist)!=numberofsegments:
    print "illegal operation"
@@ -42,7 +43,7 @@ window.title("Picture")
 img=ImageTk.PhotoImage(Image.open("piginforest.jpg"))
 w = Tkinter.Label(window, image = img)
 for i in mylist:
-	segments.append(np.asarray(misc.imread(i.basename+".png")))
+	segments.append(np.asarray(imageio.imread(i.basename+".png")))
 random.shuffle(segments)
 #for pic in segments:
 convolution=[]
@@ -64,8 +65,9 @@ for pic in segments:
     if pic.shape[0]!=pic.shape[1]:
       print "invalid shape for peice size "+str(pic.shape[0])+" "+str(pic.shape[1])
       exit()
-    name=args.save[:-4]+str(i)+args.save[-4:]
-    misc.imsave(name, pic)
+    temp="something.png"  
+    name=temp[:-4]+str(i)+temp[-4:]
+    imageio.imsave(name, pic)
     i+=1
     globalpicturedimensions=pic.shape
     top=pic[0,:]
