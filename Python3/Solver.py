@@ -114,13 +114,13 @@ class Segment:
         g1b2_piece1 = np.dot(g1_piece1, b2_piece1)/size_piece1
         b1b2_piece1 = np.dot(b1_piece1, b2_piece1)/size_piece1
 
-        r1_piece2 = a[:, 0]-redav1_piece2
-        r2_piece2 = a2[:, 0]-redav2_piece2
-        g1_piece2 = a[:, 1]-greenav1_piece2
-        g2_piece2 = a2[:, 1]-greenav2_piece2
-        b1_piece2 = a[:, 2]-blueav1_piece2
-        b2_piece2 = a2[:, 2]-blueav2_piece2
-        size_piece2 = a2[:, 2].size
+        r1_piece2 = z[:, 0]-redav1_piece2
+        r2_piece2 = z2[:, 0]-redav2_piece2
+        g1_piece2 = z[:, 1]-greenav1_piece2
+        g2_piece2 = z2[:, 1]-greenav2_piece2
+        b1_piece2 = z[:, 2]-blueav1_piece2
+        b2_piece2 = z2[:, 2]-blueav2_piece2
+        size_piece2 = z2[:, 2].size
         size_piece2 = size_piece2/1.0
         r1r2_piece2 = np.dot(r1_piece2, r2_piece2)/size_piece2
         r1g2_piece2 = np.dot(r1_piece2, g2_piece2)/size_piece2
@@ -180,7 +180,6 @@ class Segment:
             score += temp
             temp2= abs(mymatrix2*cov2*mymatrix2.T)
             score +=temp2
-            yhourm=""
         return score
 
     def calculateScoreMahalonbis(self, segment):
@@ -450,7 +449,7 @@ def main():
     #parser = setUpArguments()
     image = imread("william.png")  # parser.inputpic)
     # parser.length,parser.savepieces)
-    segment_list = breakUpImage(image, 480, True)
+    segment_list = breakUpImage(image, 120, True)
     calculateScores(segment_list)
     # return
     # result should NEVER Change because of this.  Something is wrong with the code :(
@@ -462,13 +461,12 @@ def main():
                 #b = BestConnection()
                 #saveImage(b, 60, round+500+seg.piece_num)
         best_connection = findBestConnection(segment_list, round)
-        score = best_connection.score
         best_connection.stripZeros()
         best_connection.own_segment.binary_connection_matrix = best_connection.binary_connection_matrix
         best_connection.own_segment.pic_connection_matix = best_connection.pic_connection_matix
         segment_list.remove(best_connection.join_segment)
         if True:  # parser.saveassembly:
-            saveImage(best_connection, 480, round)
+            saveImage(best_connection, 120, round)
         round += 1
         resetConnection(segment_list)
 

@@ -1,7 +1,7 @@
 import numpy as np
 import uuid
 class Pic:
-    def __init__(self, pic, name,top, left, right, bottom, top2, left2, right2, bottom2):
+    def __init__(self, pic, name,top, left, right, bottom, top2, left2, right2, bottom2, number):
       self.pic = pic
       self.name=name
       self.up=top
@@ -28,7 +28,7 @@ class Pic:
       self.graddown_red=None
       self.graddown_green=None
       self.graddown_blue=None
-      self.UUID=None
+      self.UUID=number
     def setcovariance(self):
        self.covarianceTop=np.zeros([3,3])
        self.covarianceBottom=np.zeros([3,3])
@@ -73,6 +73,7 @@ class Pic:
        self.covarianceTop[2,2]=b1b2
 
        redav1down=np.average(self.down[:,0]) #extract red blue and green
+       print(redav1down," av")
        greenav1down=np.average(self.down[:,1])
        blueav1down=np.average(self.down[:,2])
        redav2down=np.average(self.down2[:,0])
@@ -183,4 +184,3 @@ class Pic:
        self.covarianceRight[2,1]=g1b2
        self.covarianceRight[2,2]=b1b2
 
-       self.UUID=uuid.uuid4()

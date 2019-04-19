@@ -44,7 +44,7 @@ img=ImageTk.PhotoImage(Image.open("piginforest.jpg"))
 w = Tkinter.Label(window, image = img)
 for i in mylist:
 	segments.append(np.asarray(imageio.imread(i.basename+".png")))
-random.shuffle(segments)
+#random.shuffle(segments)
 #for pic in segments:
 convolution=[]
 
@@ -78,7 +78,7 @@ for pic in segments:
     right2=pic[:, pic.shape[0]-2]
     bottom=pic[pic.shape[0]-1,:]
     bottom2=pic[pic.shape[0]-2, :]
-    temp=Node(pic, name, args.rotate, np.asarray([[1,0],[0,0]]), np.asarray([[Pic(pic, name,top, left, right, bottom, top2, left2, right2, bottom2),0], [0,0]]), maxdimensions, mymap)
+    temp=Node(pic, name, args.rotate, np.asarray([[1,0],[0,0]]), np.asarray([[Pic(pic, name,top, left, right, bottom, top2, left2, right2, bottom2,i),0], [0,0]]), maxdimensions, mymap)
     #print "my pic is ", pic, " with right ", right, " and left ", left, " and bottom ",bottom, " and top ", top
     temp.picarray[0,0].setcovariance()
     #print temp.picarry
