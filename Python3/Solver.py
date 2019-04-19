@@ -84,7 +84,7 @@ class Segment:
         covariance_piece1 = np.zeros([3, 3])
         covariance_piece2 = np.zeros([3, 3])
 
-        dude=a[:,0]
+        dude = a[:, 0]
         redav1_piece1 = np.average(a[:, 0])  # extract red blue and green
         greenav1_piece1 = np.average(a[:, 1])
         blueav1_piece1 = np.average(a[:, 2])
@@ -110,8 +110,13 @@ class Segment:
         r1r2_piece1 = np.dot(r1_piece1, r2_piece1)/size_piece1
         r1g2_piece1 = np.dot(r1_piece1, g2_piece1)/size_piece1
         r1b2_piece1 = np.dot(r1_piece1, b2_piece1)/size_piece1
+
+        g1r2_piece1 = np.dot(g1_piece1, r2_piece1)/size_piece1
         g1g2_piece1 = np.dot(g1_piece1, g2_piece1)/size_piece1
         g1b2_piece1 = np.dot(g1_piece1, b2_piece1)/size_piece1
+
+        b1r2_piece1 = np.dot(b1_piece1, r2_piece1)/size_piece1
+        b1g2_piece1 = np.dot(b1_piece1, g2_piece1)/size_piece1
         b1b2_piece1 = np.dot(b1_piece1, b2_piece1)/size_piece1
 
         r1_piece2 = z[:, 0]-redav1_piece2
@@ -125,32 +130,38 @@ class Segment:
         r1r2_piece2 = np.dot(r1_piece2, r2_piece2)/size_piece2
         r1g2_piece2 = np.dot(r1_piece2, g2_piece2)/size_piece2
         r1b2_piece2 = np.dot(r1_piece2, b2_piece2)/size_piece2
+
+        g1r2_piece2 = np.dot(g1_piece2, r2_piece2)/size_piece2
         g1g2_piece2 = np.dot(g1_piece2, g2_piece2)/size_piece2
         g1b2_piece2 = np.dot(g1_piece2, b2_piece2)/size_piece2
+
+        b1r2_piece2 = np.dot(b1_piece2, r2_piece2)/size_piece2
+        b1g2_piece2 = np.dot(b1_piece2, g2_piece2)/size_piece2
         b1b2_piece2 = np.dot(b1_piece2, b2_piece2)/size_piece2
 
+#this might not work :(
         covariance_piece1[0, 0] = r1r2_piece1  # top row
-        covariance_piece1[0, 1] = r1g2_piece1
-        covariance_piece1[0, 2] = r1b2_piece1
+        covariance_piece1[0, 1] = r1g2_piece1+g1r2_piece1
+        covariance_piece1[0, 2] = r1b2_piece1+b1r2_piece1
 
-        covariance_piece1[1, 0] = r1g2_piece1  # middle row
+        covariance_piece1[1, 0] = g1r2_piece1+r1g2_piece1  # middle row
         covariance_piece1[1, 1] = g1g2_piece1
-        covariance_piece1[1, 2] = g1b2_piece1
+        covariance_piece1[1, 2] = g1b2_piece1+b1g2_piece1
 
-        covariance_piece1[2, 0] = r1b2_piece1
-        covariance_piece1[2, 1] = g1b2_piece1
+        covariance_piece1[2, 0] = b1r2_piece1+r1b2_piece1
+        covariance_piece1[2, 1] = b1g2_piece1+g1b2_piece1
         covariance_piece1[2, 2] = b1b2_piece1
 
         covariance_piece2[0, 0] = r1r2_piece2  # top row
-        covariance_piece2[0, 1] = r1g2_piece2
-        covariance_piece2[0, 2] = r1b2_piece2
+        covariance_piece2[0, 1] = r1g2_piece2+g1r2_piece2
+        covariance_piece2[0, 2] = r1b2_piece2+b1r2_piece2
 
-        covariance_piece2[1, 0] = r1g2_piece2  # middle row
+        covariance_piece2[1, 0] = g1r2_piece2+r1g2_piece2  # middle row
         covariance_piece2[1, 1] = g1g2_piece2
-        covariance_piece2[1, 2] = g1b2_piece2
+        covariance_piece2[1, 2] = g1b2_piece2+b1g2_piece2
 
-        covariance_piece2[2, 0] = r1b2_piece2
-        covariance_piece2[2, 1] = g1b2_piece2
+        covariance_piece2[2, 0] = b1r2_piece2+r1b2_piece2
+        covariance_piece2[2, 1] = b1g2_piece2+g1b2_piece2
         covariance_piece2[2, 2] = b1b2_piece2
 
         score = 0.0
@@ -161,7 +172,18 @@ class Segment:
         redaverage = np.average(r1_piece1)
         greenaverage = np.average(g1_piece1)
         blueaverage = np.average(b1_piece1)
+        #print (covariance_piece1)
         cov = np.linalg.inv(covariance_piece1)
+        # try:
+        #     print(cov)
+        #     cov = np.linalg.inv(covariance_piece1)
+        #     print(cov)
+        # except:
+        #     covariance_piece1[1,0]+=0.1
+        #     covariance_piece1[1,1]+=0.1
+        #     covariance_piece1[1,2]+=0.1
+        #     print("i come into the catch")
+        #     cov = np.linalg.inv(covariance_piece1)
 
         red2 = r1_piece2-r1_piece1
         green2 = g1_piece2-g1_piece1
@@ -176,10 +198,10 @@ class Segment:
             mymatrix2 = np.matrix(
                 [red2[i]-redaverage2, green2[i]-greenaverage2, blue2[i]-blueaverage2])
             i += 1
-            temp =abs(mymatrix*cov*mymatrix.T)
+            temp = abs(mymatrix*cov*mymatrix.T)
             score += temp
-            temp2= abs(mymatrix2*cov2*mymatrix2.T)
-            score +=temp2
+            temp2 = abs(mymatrix2*cov2*mymatrix2.T)
+            score += temp2
         return score
 
     def calculateScoreMahalonbis(self, segment):
