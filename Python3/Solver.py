@@ -5,6 +5,8 @@ import sys
 from imageio import imread, imsave
 from enum import Enum
 from scipy.ndimage.morphology import binary_dilation
+import tkinter
+from PIL import ImageTk,Image
 
 
 class JoinDirection(Enum):
@@ -141,27 +143,27 @@ class Segment:
 
 #this might not work :(
         covariance_piece1[0, 0] = r1r2_piece1  # top row
-        covariance_piece1[0, 1] = r1g2_piece1+g1r2_piece1
-        covariance_piece1[0, 2] = r1b2_piece1+b1r2_piece1
+        covariance_piece1[0, 1] = r1g2_piece1+g1r2_piece1/2
+        covariance_piece1[0, 2] = r1b2_piece1+b1r2_piece1/2
 
-        covariance_piece1[1, 0] = g1r2_piece1+r1g2_piece1  # middle row
+        covariance_piece1[1, 0] = g1r2_piece1+r1g2_piece1/2  # middle row
         covariance_piece1[1, 1] = g1g2_piece1
-        covariance_piece1[1, 2] = g1b2_piece1+b1g2_piece1
+        covariance_piece1[1, 2] = g1b2_piece1+b1g2_piece1/2
 
-        covariance_piece1[2, 0] = b1r2_piece1+r1b2_piece1
-        covariance_piece1[2, 1] = b1g2_piece1+g1b2_piece1
+        covariance_piece1[2, 0] = b1r2_piece1+r1b2_piece1/2
+        covariance_piece1[2, 1] = b1g2_piece1+g1b2_piece1/2
         covariance_piece1[2, 2] = b1b2_piece1
 
         covariance_piece2[0, 0] = r1r2_piece2  # top row
-        covariance_piece2[0, 1] = r1g2_piece2+g1r2_piece2
-        covariance_piece2[0, 2] = r1b2_piece2+b1r2_piece2
+        covariance_piece2[0, 1] = r1g2_piece2+g1r2_piece2/2
+        covariance_piece2[0, 2] = r1b2_piece2+b1r2_piece2/2
 
-        covariance_piece2[1, 0] = g1r2_piece2+r1g2_piece2  # middle row
+        covariance_piece2[1, 0] = g1r2_piece2+r1g2_piece2/2  # middle row
         covariance_piece2[1, 1] = g1g2_piece2
-        covariance_piece2[1, 2] = g1b2_piece2+b1g2_piece2
+        covariance_piece2[1, 2] = g1b2_piece2+b1g2_piece2/2
 
-        covariance_piece2[2, 0] = b1r2_piece2+r1b2_piece2
-        covariance_piece2[2, 1] = b1g2_piece2+g1b2_piece2
+        covariance_piece2[2, 0] = b1r2_piece2+r1b2_piece2/2
+        covariance_piece2[2, 1] = b1g2_piece2+g1b2_piece2/2
         covariance_piece2[2, 2] = b1b2_piece2
 
         score = 0.0
@@ -172,18 +174,7 @@ class Segment:
         redaverage = np.average(r1_piece1)
         greenaverage = np.average(g1_piece1)
         blueaverage = np.average(b1_piece1)
-        #print (covariance_piece1)
-        cov = np.linalg.inv(covariance_piece1)
-        # try:
-        #     print(cov)
-        #     cov = np.linalg.inv(covariance_piece1)
-        #     print(cov)
-        # except:
-        #     covariance_piece1[1,0]+=0.1
-        #     covariance_piece1[1,1]+=0.1
-        #     covariance_piece1[1,2]+=0.1
-        #     print("i come into the catch")
-        #     cov = np.linalg.inv(covariance_piece1)
+        cov = np.linalg.pinv(covariance_piece1)
 
         red2 = r1_piece2-r1_piece1
         green2 = g1_piece2-g1_piece1
@@ -465,14 +456,20 @@ def saveImage(best_connection, peice_size, round):
         new_image[x1:x2, y1:y2, :] = piece_to_assemble
     new_image = new_image.astype(np.uint8)
     imsave("round"+str(round)+".png", new_image)
+    return "round"+str(round)+".png"
 
 
 def main():
+    
     #parser = setUpArguments()
     image = imread("william.png")  # parser.inputpic)
     # parser.length,parser.savepieces)
-    segment_list = breakUpImage(image, 120, True)
+    segment_list = breakUpImage(image, 480, True)
     calculateScores(segment_list)
+    window=tkinter.Tk()
+    window.title("Picture")
+    img=ImageTk.PhotoImage(Image.open("william.png"))
+    w = tkinter.Label(window, image = img)
     # return
     # result should NEVER Change because of this.  Something is wrong with the code :(
     random.shuffle(segment_list)
@@ -488,9 +485,14 @@ def main():
         best_connection.own_segment.pic_connection_matix = best_connection.pic_connection_matix
         segment_list.remove(best_connection.join_segment)
         if True:  # parser.saveassembly:
-            saveImage(best_connection, 120, round)
+            updated_picture = ImageTk.PhotoImage(Image.open(saveImage(best_connection, 480, round)))
+            w.configure(image = updated_picture)
+            w.image=updated_picture
+            w.pack(side = "bottom", fill = "both", expand = "no")
+            window.update()
         round += 1
         resetConnection(segment_list)
+       
 
 
 if __name__ == '__main__':
