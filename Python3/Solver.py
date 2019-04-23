@@ -6,7 +6,7 @@ from imageio import imread, imsave
 from enum import Enum
 from scipy.ndimage.morphology import binary_dilation
 import tkinter
-from PIL import ImageTk,Image
+from PIL import ImageTk, Image
 
 
 class JoinDirection(Enum):
@@ -78,7 +78,7 @@ class Segment:
         temp = sum([np.linalg.norm(x - y) for x, y in zip(a, b)])
         return temp
 
-    def mahalanobisDistance(self, a, a2, z, z2):
+    def mahalanobisDistance(self, a, a2, z, z2, piece2Num,direction):
         a = a[0].astype(np.int16)  # underflows would occur without this
         a2 = a2[0].astype(np.int16)
         z = z[0].astype(np.int16)
@@ -86,7 +86,6 @@ class Segment:
         covariance_piece1 = np.zeros([3, 3])
         covariance_piece2 = np.zeros([3, 3])
 
-        dude = a[:, 0]
         redav1_piece1 = np.average(a[:, 0])  # extract red blue and green
         greenav1_piece1 = np.average(a[:, 1])
         blueav1_piece1 = np.average(a[:, 2])
@@ -141,33 +140,31 @@ class Segment:
         b1g2_piece2 = np.dot(b1_piece2, g2_piece2)/size_piece2
         b1b2_piece2 = np.dot(b1_piece2, b2_piece2)/size_piece2
 
-#this might not work :(
+        # this covarince matrix needs work  Test shuffling to see if scores are always the same
         covariance_piece1[0, 0] = r1r2_piece1  # top row
-        covariance_piece1[0, 1] = r1g2_piece1+g1r2_piece1/2
-        covariance_piece1[0, 2] = r1b2_piece1+b1r2_piece1/2
+        covariance_piece1[0, 1] = (r1g2_piece1+g1r2_piece1)/2
+        covariance_piece1[0, 2] = (r1b2_piece1+b1r2_piece1)/2
 
-        covariance_piece1[1, 0] = g1r2_piece1+r1g2_piece1/2  # middle row
+        covariance_piece1[1, 0] = (g1r2_piece1+r1g2_piece1)/2  # middle row
         covariance_piece1[1, 1] = g1g2_piece1
-        covariance_piece1[1, 2] = g1b2_piece1+b1g2_piece1/2
+        covariance_piece1[1, 2] = (g1b2_piece1+b1g2_piece1)/2
 
-        covariance_piece1[2, 0] = b1r2_piece1+r1b2_piece1/2
-        covariance_piece1[2, 1] = b1g2_piece1+g1b2_piece1/2
+        covariance_piece1[2, 0] = (b1r2_piece1+r1b2_piece1)/2
+        covariance_piece1[2, 1] = (b1g2_piece1+g1b2_piece1)/2
         covariance_piece1[2, 2] = b1b2_piece1
 
         covariance_piece2[0, 0] = r1r2_piece2  # top row
-        covariance_piece2[0, 1] = r1g2_piece2+g1r2_piece2/2
-        covariance_piece2[0, 2] = r1b2_piece2+b1r2_piece2/2
+        covariance_piece2[0, 1] = (r1g2_piece2+g1r2_piece2)/2
+        covariance_piece2[0, 2] = (r1b2_piece2+b1r2_piece2)/2
 
-        covariance_piece2[1, 0] = g1r2_piece2+r1g2_piece2/2  # middle row
+        covariance_piece2[1, 0] = (g1r2_piece2+r1g2_piece2)/2  # middle row
         covariance_piece2[1, 1] = g1g2_piece2
-        covariance_piece2[1, 2] = g1b2_piece2+b1g2_piece2/2
+        covariance_piece2[1, 2] = (g1b2_piece2+b1g2_piece2)/2
 
-        covariance_piece2[2, 0] = b1r2_piece2+r1b2_piece2/2
-        covariance_piece2[2, 1] = b1g2_piece2+g1b2_piece2/2
+        covariance_piece2[2, 0] = (b1r2_piece2+r1b2_piece2)/2
+        covariance_piece2[2, 1] = (b1g2_piece2+g1b2_piece2)/2
         covariance_piece2[2, 2] = b1b2_piece2
 
-        score = 0.0
-        i = 0
         red = r1_piece1-r1_piece2
         green = g1_piece1-g1_piece2
         blue = b1_piece1-b1_piece2
@@ -176,23 +173,31 @@ class Segment:
         blueaverage = np.average(b1_piece1)
         cov = np.linalg.pinv(covariance_piece1)
 
+        try:
+            something=np.linalg.inv(covariance_piece1)
+        except:
+            print("my matrix ",covariance_piece1," this piece ",self.piece_number," with piece ",piece2Num ," direction ",direction," cov")
+        try:
+            something2=np.linalg.inv(covariance_piece2)
+        except:
+            print("my matrix ",covariance_piece2," this piece ",self.piece_number," with piece ",piece2Num ," direction ",direction," cov2")
+
         red2 = r1_piece2-r1_piece1
         green2 = g1_piece2-g1_piece1
         blue2 = b1_piece2-b1_piece1
         redaverage2 = np.average(r1_piece2)
         greenaverage2 = np.average(g1_piece2)
         blueaverage2 = np.average(b1_piece2)
-        cov2 = np.linalg.inv(covariance_piece2)
-        while i < len(red):  # change this terrible way of doing it
+        cov2 = np.linalg.pinv(covariance_piece2)
+
+        score = 0.0
+        for i in range(len(red)):  # change this terrible way of doing it
             mymatrix = np.matrix(
                 [red[i]-redaverage, green[i]-greenaverage, blue[i]-blueaverage])
             mymatrix2 = np.matrix(
                 [red2[i]-redaverage2, green2[i]-greenaverage2, blue2[i]-blueaverage2])
-            i += 1
-            temp = abs(mymatrix*cov*mymatrix.T)
-            score += temp
-            temp2 = abs(mymatrix2*cov2*mymatrix2.T)
-            score += temp2
+            score += abs(mymatrix*cov*mymatrix.T)
+            score += abs(mymatrix2*cov2*mymatrix2.T)
         return score
 
     def calculateScoreMahalonbis(self, segment):
@@ -220,13 +225,13 @@ class Segment:
         own_number = self.piece_number
         join_number = segment.piece_number
         self.score_dict[own_number, JoinDirection.UP,
-                        join_number] = self.mahalanobisDistance(self_top, self_top2, compare_bottom, compare_bottom2)
+                        join_number] = self.mahalanobisDistance(self_top, self_top2, compare_bottom, compare_bottom2, join_number, "up")
         self.score_dict[own_number, JoinDirection.DOWN,
-                        join_number] = self.mahalanobisDistance(self_bottom, self_bottom2, compare_top, compare_top2)
+                        join_number] = self.mahalanobisDistance(self_bottom, self_bottom2, compare_top, compare_top2, join_number,"down")
         self.score_dict[own_number, JoinDirection.LEFT,
-                        join_number] = self.mahalanobisDistance(self_left, self_left2, compare_right, compare_right2)
+                        join_number] = self.mahalanobisDistance(self_left, self_left2, compare_right, compare_right2, join_number, "right")
         self.score_dict[own_number, JoinDirection.RIGHT,
-                        join_number] = self.mahalanobisDistance(self_right, self_right2, compare_left, compare_left2)
+                        join_number] = self.mahalanobisDistance(self_right, self_right2, compare_left, compare_left2, join_number, "left")
 
     def calculateScoreEuclidean(self, segment):
         size = segment.pic_matrix.shape[0]
@@ -455,44 +460,41 @@ def saveImage(best_connection, peice_size, round):
         y2 = y1+peice_size
         new_image[x1:x2, y1:y2, :] = piece_to_assemble
     new_image = new_image.astype(np.uint8)
-    imsave("round"+str(round)+".png", new_image)
-    return "round"+str(round)+".png"
+    imageName = "round"+str(round)+".png"
+    imsave(imageName, new_image)
+    return imageName
 
 
 def main():
-    
+
     #parser = setUpArguments()
     image = imread("william.png")  # parser.inputpic)
     # parser.length,parser.savepieces)
-    segment_list = breakUpImage(image, 480, True)
+    segment_list = breakUpImage(image, 60, True)
     calculateScores(segment_list)
-    window=tkinter.Tk()
+    window = tkinter.Tk()
     window.title("Picture")
-    img=ImageTk.PhotoImage(Image.open("william.png"))
-    w = tkinter.Label(window, image = img)
+    img = ImageTk.PhotoImage(Image.open("william.png"))
+    w = tkinter.Label(window, image=img)
     # return
     # result should NEVER Change because of this.  Something is wrong with the code :(
     random.shuffle(segment_list)
     round = 0
     while len(segment_list) > 1:
-        # if round == 244:
-            # for seg in segment_list:
-                #b = BestConnection()
-                #saveImage(b, 60, round+500+seg.piece_num)
         best_connection = findBestConnection(segment_list, round)
         best_connection.stripZeros()
         best_connection.own_segment.binary_connection_matrix = best_connection.binary_connection_matrix
         best_connection.own_segment.pic_connection_matix = best_connection.pic_connection_matix
         segment_list.remove(best_connection.join_segment)
         if True:  # parser.saveassembly:
-            updated_picture = ImageTk.PhotoImage(Image.open(saveImage(best_connection, 480, round)))
-            w.configure(image = updated_picture)
-            w.image=updated_picture
-            w.pack(side = "bottom", fill = "both", expand = "no")
+            updated_picture = ImageTk.PhotoImage(
+                Image.open(saveImage(best_connection, 60, round)))
+            w.configure(image=updated_picture)
+            w.image = updated_picture
+            w.pack(side="bottom", fill="both", expand="no")
             window.update()
         round += 1
         resetConnection(segment_list)
-       
 
 
 if __name__ == '__main__':
