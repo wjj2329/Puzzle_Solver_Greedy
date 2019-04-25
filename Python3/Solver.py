@@ -7,6 +7,7 @@ from enum import Enum
 from scipy.ndimage.morphology import binary_dilation
 import tkinter
 from PIL import ImageTk, Image
+from skimage import io, color
 
 
 class JoinDirection(Enum):
@@ -73,12 +74,12 @@ class Segment:
         self.piece_number = piece_number
 
     def euclideanDistance(self, a, b):
-        a = a[0].astype(np.int16)  # underflows would occur without this
-        b = b[0].astype(np.int16)
+        a = a[0].astype(np.float64)  # underflows would occur without this
+        b = b[0].astype(np.float64)
         temp = sum([np.linalg.norm(x - y) for x, y in zip(a, b)])
         return temp
 
-    def mahalanobisDistance(self, a, a2, z, z2, piece2Num,direction):
+    def mahalanobisDistance(self, a, a2, z, z2, piece2Num, direction):
         a = a[0].astype(np.int16)  # underflows would occur without this
         a2 = a2[0].astype(np.int16)
         z = z[0].astype(np.int16)
@@ -174,13 +175,15 @@ class Segment:
         cov = np.linalg.pinv(covariance_piece1)
 
         try:
-            something=np.linalg.inv(covariance_piece1)
+            something = np.linalg.inv(covariance_piece1)
         except:
-            print("my matrix ",covariance_piece1," this piece ",self.piece_number," with piece ",piece2Num ," direction ",direction," cov")
+            print("my matrix ", covariance_piece1, " this piece ", self.piece_number,
+                  " with piece ", piece2Num, " direction ", direction, " cov")
         try:
-            something2=np.linalg.inv(covariance_piece2)
+            something2 = np.linalg.inv(covariance_piece2)
         except:
-            print("my matrix ",covariance_piece2," this piece ",self.piece_number," with piece ",piece2Num ," direction ",direction," cov2")
+            print("my matrix ", covariance_piece2, " this piece ", self.piece_number,
+                  " with piece ", piece2Num, " direction ", direction, " cov2")
 
         red2 = r1_piece2-r1_piece1
         green2 = g1_piece2-g1_piece1
@@ -227,7 +230,7 @@ class Segment:
         self.score_dict[own_number, JoinDirection.UP,
                         join_number] = self.mahalanobisDistance(self_top, self_top2, compare_bottom, compare_bottom2, join_number, "up")
         self.score_dict[own_number, JoinDirection.DOWN,
-                        join_number] = self.mahalanobisDistance(self_bottom, self_bottom2, compare_top, compare_top2, join_number,"down")
+                        join_number] = self.mahalanobisDistance(self_bottom, self_bottom2, compare_top, compare_top2, join_number, "down")
         self.score_dict[own_number, JoinDirection.LEFT,
                         join_number] = self.mahalanobisDistance(self_left, self_left2, compare_right, compare_right2, join_number, "right")
         self.score_dict[own_number, JoinDirection.RIGHT,
@@ -404,10 +407,12 @@ def breakUpImage(image, length, save_segments):
     for x in range(num_of_pieces_width):
         for y in range(num_of_pieces_height):
             save = image[picX: picX+length, picY: picY+length, :]
+            print (save)
             append(Segment(save, num_of_pieces_width,
                            num_of_pieces_height, piece_num))
             piece_num += 1
             if save_segments:
+                save=color.lab2rgb(save)
                 imsave(str(x)+"_"+str(y)+".png", save)
             picY += length
         picX += length
@@ -419,7 +424,7 @@ def calculateScores(segment_list):
     for segment1 in segment_list:
         for segment2 in segment_list:
             if segment1 != segment2:
-                segment1.calculateScoreMahalonbis(segment2)
+                segment1.calculateScoreEuclidean(segment2)
 
 
 def findBestConnection(segment_list, round):
@@ -445,7 +450,7 @@ def resetConnection(my_list):
         connection.best_connection_found_so_far = BestConnection()
 
 
-def saveImage(best_connection, peice_size, round):
+def saveImage(best_connection, peice_size, round, cielab):
     pic_locations = best_connection.binary_connection_matrix.nonzero()
     sizex = (max(pic_locations[0])-min(pic_locations[0]))+1
     sizey = (max(pic_locations[1])-min(pic_locations[1]))+1
@@ -460,6 +465,9 @@ def saveImage(best_connection, peice_size, round):
         y2 = y1+peice_size
         new_image[x1:x2, y1:y2, :] = piece_to_assemble
     new_image = new_image.astype(np.uint8)
+    if cielab:
+        print(new_image)
+        new_image = color.lab2rgb(new_image)
     imageName = "round"+str(round)+".png"
     imsave(imageName, new_image)
     return imageName
@@ -468,9 +476,13 @@ def saveImage(best_connection, peice_size, round):
 def main():
 
     #parser = setUpArguments()
-    image = imread("william.png")  # parser.inputpic)
+    cielab = True  # parser.cielab
+    image = imread("william.png")  # parser.inputpic
+    if(cielab):
+        image = io.imread("william.png")
+        image = color.rgb2lab(image)
     # parser.length,parser.savepieces)
-    segment_list = breakUpImage(image, 60, True)
+    segment_list = breakUpImage(image, 480, True)
     calculateScores(segment_list)
     window = tkinter.Tk()
     window.title("Picture")
@@ -488,7 +500,7 @@ def main():
         segment_list.remove(best_connection.join_segment)
         if True:  # parser.saveassembly:
             updated_picture = ImageTk.PhotoImage(
-                Image.open(saveImage(best_connection, 60, round)))
+                Image.open(saveImage(best_connection, 480, round, cielab)))
             w.configure(image=updated_picture)
             w.image = updated_picture
             w.pack(side="bottom", fill="both", expand="no")
