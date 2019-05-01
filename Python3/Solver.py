@@ -389,7 +389,7 @@ def setUpArguments():
     return parser.parse_args()
 
 
-def breakUpImage(image, length, save_segments):
+def breakUpImage(image, length, save_segments,cielab):
     dimensions = image.shape
     if dimensions[0] != dimensions[1]:
         print("Only square images will work for now to keep things simple")
@@ -407,12 +407,10 @@ def breakUpImage(image, length, save_segments):
     for x in range(num_of_pieces_width):
         for y in range(num_of_pieces_height):
             save = image[picX: picX+length, picY: picY+length, :]
-            print (save)
             append(Segment(save, num_of_pieces_width,
                            num_of_pieces_height, piece_num))
             piece_num += 1
             if save_segments:
-                save=color.lab2rgb(save)
                 imsave(str(x)+"_"+str(y)+".png", save)
             picY += length
         picX += length
@@ -464,11 +462,11 @@ def saveImage(best_connection, peice_size, round, cielab):
         x2 = x1+peice_size
         y2 = y1+peice_size
         new_image[x1:x2, y1:y2, :] = piece_to_assemble
-    new_image = new_image.astype(np.uint8)
+    #print("image before is ", new_image)    
     if cielab:
-        print(new_image)
         new_image = color.lab2rgb(new_image)
-    imageName = "round"+str(round)+".png"
+        #print("my new image is ",new_image)
+    imageName = "roundTest"+str(round)+".png"
     imsave(imageName, new_image)
     return imageName
 
@@ -482,14 +480,12 @@ def main():
         image = io.imread("william.png")
         image = color.rgb2lab(image)
     # parser.length,parser.savepieces)
-    segment_list = breakUpImage(image, 480, True)
+    segment_list = breakUpImage(image, 60, True, True)
     calculateScores(segment_list)
     window = tkinter.Tk()
     window.title("Picture")
     img = ImageTk.PhotoImage(Image.open("william.png"))
     w = tkinter.Label(window, image=img)
-    # return
-    # result should NEVER Change because of this.  Something is wrong with the code :(
     random.shuffle(segment_list)
     round = 0
     while len(segment_list) > 1:
@@ -500,7 +496,7 @@ def main():
         segment_list.remove(best_connection.join_segment)
         if True:  # parser.saveassembly:
             updated_picture = ImageTk.PhotoImage(
-                Image.open(saveImage(best_connection, 480, round, cielab)))
+                Image.open(saveImage(best_connection, 60, round, cielab)))
             w.configure(image=updated_picture)
             w.image = updated_picture
             w.pack(side="bottom", fill="both", expand="no")
