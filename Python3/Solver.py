@@ -59,10 +59,12 @@ class BestConnection:
 class Segment:
     pic_matrix = None
     score_dict = {}
+    #connections_dict = {}
     binary_connection_matrix = np.asarray([[1, 0], [0, 0]])
     pic_connection_matix = None
     max_width = 0
     max_height = 0
+    #needs_updating=True
     best_connection_found_so_far = BestConnection()
     piece_number = -1
 
@@ -295,6 +297,8 @@ class Segment:
             print()
 
     def calculateConnections(self, compare_segment, round):
+        #if (self.piece_number, compare_segment.piece_number) in self.connections_dict and not self.needs_updating and not compare_segment.needs_updating:
+            #return self.connections_dict[(self.piece_number, compare_segment.piece_number)]
         h1 = self.binary_connection_matrix.shape[0]
         w1 = self.binary_connection_matrix.shape[1]
         h2 = compare_segment.binary_connection_matrix.shape[0]
@@ -373,6 +377,8 @@ class Segment:
                         self.best_connection_found_so_far.score = score
                         self.best_connection_found_so_far.own_segment = self
                         self.best_connection_found_so_far.join_segment = compare_segment
+        #self.connections_dict[(
+            #self.piece_number, compare_segment.piece_number)] = self.best_connection_found_so_far
         return self.best_connection_found_so_far
 
 
@@ -389,7 +395,7 @@ def setUpArguments():
     return parser.parse_args()
 
 
-def breakUpImage(image, length, save_segments,cielab):
+def breakUpImage(image, length, save_segments, cielab):
     dimensions = image.shape
     if dimensions[0] != dimensions[1]:
         print("Only square images will work for now to keep things simple")
@@ -425,6 +431,7 @@ def calculateScores(segment_list):
                 segment1.calculateScoreEuclidean(segment2)
 
 
+# TODO make this a map instead of doing the same comparison over and over again.
 def findBestConnection(segment_list, round):
     best_so_far = BestConnection()
     for index, segment1 in enumerate(segment_list):
@@ -462,7 +469,7 @@ def saveImage(best_connection, peice_size, round, cielab):
         x2 = x1+peice_size
         y2 = y1+peice_size
         new_image[x1:x2, y1:y2, :] = piece_to_assemble
-    #print("image before is ", new_image)    
+    #print("image before is ", new_image)
     if cielab:
         new_image = color.lab2rgb(new_image)
         #print("my new image is ",new_image)
@@ -480,7 +487,7 @@ def main():
         image = io.imread("william.png")
         image = color.rgb2lab(image)
     # parser.length,parser.savepieces)
-    segment_list = breakUpImage(image, 60, True, True)
+    segment_list = breakUpImage(image, 480, True, True)
     calculateScores(segment_list)
     window = tkinter.Tk()
     window.title("Picture")
@@ -488,6 +495,7 @@ def main():
     w = tkinter.Label(window, image=img)
     random.shuffle(segment_list)
     round = 0
+    originalsize=len(segment_list)
     while len(segment_list) > 1:
         best_connection = findBestConnection(segment_list, round)
         best_connection.stripZeros()
@@ -496,7 +504,7 @@ def main():
         segment_list.remove(best_connection.join_segment)
         if True:  # parser.saveassembly:
             updated_picture = ImageTk.PhotoImage(
-                Image.open(saveImage(best_connection, 60, round, cielab)))
+                Image.open(saveImage(best_connection, 480, round, cielab)))
             w.configure(image=updated_picture)
             w.image = updated_picture
             w.pack(side="bottom", fill="both", expand="no")
