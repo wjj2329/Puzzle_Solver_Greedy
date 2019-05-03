@@ -57,23 +57,24 @@ class BestConnection:
 # malhnobis and different color spaces to try out.
 
 class Segment:
+    myownNumber = 0
     pic_matrix = None
     score_dict = {}
-    #connections_dict = {}
+    connections_dict = {}
     binary_connection_matrix = np.asarray([[1, 0], [0, 0]])
     pic_connection_matix = None
     max_width = 0
     max_height = 0
-    #needs_updating=True
     best_connection_found_so_far = BestConnection()
     piece_number = -1
 
-    def __init__(self, pic_matrix, max_width, max_height, piece_number):
+    def __init__(self, pic_matrix, max_width, max_height, piece_number, myownNumber):
         self.pic_matrix = pic_matrix
         self.pic_connection_matix = np.asarray([[self, 0], [0, 0]])
         self.max_width = max_width
         self.max_height = max_height
         self.piece_number = piece_number
+        self.myownNumber = myownNumber
 
     def euclideanDistance(self, a, b):
         a = a[0].astype(np.float64)  # underflows would occur without this
@@ -297,8 +298,8 @@ class Segment:
             print()
 
     def calculateConnections(self, compare_segment, round):
-        #if (self.piece_number, compare_segment.piece_number) in self.connections_dict and not self.needs_updating and not compare_segment.needs_updating:
-            #return self.connections_dict[(self.piece_number, compare_segment.piece_number)]
+        if (self.myownNumber, compare_segment.myownNumber) in self.connections_dict:
+            return self.connections_dict[(self.myownNumber, compare_segment.myownNumber)]
         h1 = self.binary_connection_matrix.shape[0]
         w1 = self.binary_connection_matrix.shape[1]
         h2 = compare_segment.binary_connection_matrix.shape[0]
@@ -377,8 +378,8 @@ class Segment:
                         self.best_connection_found_so_far.score = score
                         self.best_connection_found_so_far.own_segment = self
                         self.best_connection_found_so_far.join_segment = compare_segment
-        #self.connections_dict[(
-            #self.piece_number, compare_segment.piece_number)] = self.best_connection_found_so_far
+        self.connections_dict[(
+            self.myownNumber, compare_segment.myownNumber)] = self.best_connection_found_so_far
         return self.best_connection_found_so_far
 
 
@@ -414,7 +415,7 @@ def breakUpImage(image, length, save_segments, cielab):
         for y in range(num_of_pieces_height):
             save = image[picX: picX+length, picY: picY+length, :]
             append(Segment(save, num_of_pieces_width,
-                           num_of_pieces_height, piece_num))
+                           num_of_pieces_height, piece_num, piece_num))
             piece_num += 1
             if save_segments:
                 imsave(str(x)+"_"+str(y)+".png", save)
@@ -436,7 +437,10 @@ def findBestConnection(segment_list, round):
     best_so_far = BestConnection()
     for index, segment1 in enumerate(segment_list):
         for segment2 in segment_list[index+1:]:
+            segment1.best_connection_found_so_far=BestConnection()
             temp = segment1.calculateConnections(segment2, round)
+            segment1.best_connection_found_so_far=BestConnection()
+            #print(segment1.myownNumber, segment2.myownNumber)
             if temp.isBetterConnection(best_so_far):
                 best_so_far = temp
     return best_so_far
@@ -450,9 +454,16 @@ def printPiecesMatrices(segment_list):
     print('\n\n\n')
 
 
-def resetConnection(my_list):
+def resetConnection(my_list, removing):
     for connection in my_list:
         connection.best_connection_found_so_far = BestConnection()
+        '''
+        newscoredict={}
+        for key,val in connection.connections_dict:
+            if key !=removing and val!=removing:
+                newscoredict[(key,val)]=connection.connections_dict[(key,val)]
+        connection.connections_dict=newscoredict
+        '''        
 
 
 def saveImage(best_connection, peice_size, round, cielab):
@@ -487,7 +498,7 @@ def main():
         image = io.imread("william.png")
         image = color.rgb2lab(image)
     # parser.length,parser.savepieces)
-    segment_list = breakUpImage(image, 480, True, True)
+    segment_list = breakUpImage(image, 30, True, True)
     calculateScores(segment_list)
     window = tkinter.Tk()
     window.title("Picture")
@@ -495,22 +506,27 @@ def main():
     w = tkinter.Label(window, image=img)
     random.shuffle(segment_list)
     round = 0
-    originalsize=len(segment_list)
+    original_size = len(segment_list)
     while len(segment_list) > 1:
         best_connection = findBestConnection(segment_list, round)
         best_connection.stripZeros()
         best_connection.own_segment.binary_connection_matrix = best_connection.binary_connection_matrix
         best_connection.own_segment.pic_connection_matix = best_connection.pic_connection_matix
+        origional=best_connection.own_segment.myownNumber
+        best_connection.own_segment.myownNumber += original_size
         segment_list.remove(best_connection.join_segment)
         if True:  # parser.saveassembly:
             updated_picture = ImageTk.PhotoImage(
-                Image.open(saveImage(best_connection, 480, round, cielab)))
+                Image.open(saveImage(best_connection, 30, round, cielab)))
             w.configure(image=updated_picture)
             w.image = updated_picture
             w.pack(side="bottom", fill="both", expand="no")
             window.update()
         round += 1
-        resetConnection(segment_list)
+        print("for round ", round, " i get score of ", best_connection.score)
+        #print("i should remove ", origional, best_connection.join_segment.myownNumber)
+        resetConnection(segment_list, origional)
+        #resetConnection(segment_list, best_connection.join_segment.myownNumber)
 
 
 if __name__ == '__main__':
