@@ -488,7 +488,7 @@ def saveImage(best_connection, peice_size, round, cielab):
     imsave(imageName, new_image)
     return imageName
 
-
+#todo do it with prims and KRUSKALS both ways
 def main():
 
     #parser = setUpArguments()
