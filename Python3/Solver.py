@@ -51,6 +51,13 @@ class BestConnection:
         self.join_segment = join_segment
         self.binary_connection_matrix = binary_connection_matrix
 
+    def setThings(self, pic_connection_matix, join_segment, score, own_segment, binary_connection_matrix):
+        self.pic_connection_matix = pic_connection_matix
+        self.join_segment = join_segment
+        self.score = score
+        self.own_segment = own_segment
+        self.binary_connection_matrix = binary_connection_matrix
+
     def isBetterConnection(self, otherConnection):
         return self.score < otherConnection.score
 
@@ -314,7 +321,84 @@ class Segment:
                     print(val.piece_number, end=" ")
             print()
 
-    def calculateConnections(self, compare_segment):
+    def calculateConnectionsPrim(self, compare_segment):  #find a way to store connections for first attempt
+        h1 = self.binary_connection_matrix.shape[0]
+        w1 = self.binary_connection_matrix.shape[1]
+        h2 = compare_segment.binary_connection_matrix.shape[0]
+        w2 = compare_segment.binary_connection_matrix.shape[1]
+        pad_with_piece1 = zeros((h1+2*h2, w1+2*w2))
+        pad_with_piece1[h2:(h2+h1), w2:(w2+w1)] = self.binary_connection_matrix
+        dilation_mask = asarray([[0, 1, 0], [1, 1, 1, ], [0, 1, 0]])
+        result = binary_dilation(
+            input=pad_with_piece1, structure=dilation_mask)
+        neighboring_connections = result - pad_with_piece1
+        for x in range(h1+2*h2-(h2-1)):
+            for y in range(w1+2*w2-(w2-1)):
+                pad_with_piece2 = zeros(neighboring_connections.shape)
+                pad_with_piece2[x:(x+h2), y:(y+w2)
+                                ] = compare_segment.binary_connection_matrix
+                connect_map = logical_and(
+                    neighboring_connections, pad_with_piece2)
+                overlap_map = logical_and(pad_with_piece1, pad_with_piece2)
+                has_connections = numpySum(connect_map[:]) > 0
+                has_overlap = numpySum(overlap_map[:]) > 0
+                combined_pieces = pad_with_piece1+pad_with_piece2
+                if has_connections and not has_overlap and self.checkforcompatibility(combined_pieces):
+                    store = nonzero(pad_with_piece1)
+                    score = 0
+                    numofcompar = 0
+                    padded1_pointer = zeros(
+                        (h1+2*h2, w1+2*w2), dtype="object")
+                    padded1_pointer[h2:(h2+h1), w2:(w2+w1)
+                                    ] = self.pic_connection_matix
+                    temp_pointer = zeros((h1+2*h2, w1+2*w2), dtype="object")
+                    temp_pointer[x:(h2+x), y:(w2+y)
+                                 ] = compare_segment.pic_connection_matix
+                    distancex = 0
+                    distancey = 0
+                    stuff = temp_pointer.nonzero()
+                    pair2 = (connect_map.nonzero()[
+                             0][0], connect_map.nonzero()[1][0])
+                    for y in range(0, len(stuff[0])):
+                        storeing = stuff[0][y], stuff[1][y]
+                        distancex = storeing[0]-pair2[0]
+                        distancey = storeing[1]-pair2[1]
+                        first = pair2[0]+distancex
+                        second = pair2[1]+distancey
+                        padded1_pointer[first][second] = temp_pointer[storeing[0], storeing[1]]
+                    for i in range(0, len(store[0])):
+                        temp = [store[0][i], store[1][i]]
+                        if pad_with_piece2[temp[0]][temp[1]+1] == 1:
+                            node1 = padded1_pointer[temp[0], temp[1]]
+                            node2 = padded1_pointer[temp[0], temp[1]+1]
+                            numofcompar += 1
+                            score += self.score_dict[node1.piece_number,
+                                                     JoinDirection.RIGHT, node2.piece_number]
+                        if pad_with_piece2[temp[0]][temp[1]-1] == 1:
+                            node1 = padded1_pointer[temp[0], temp[1]]
+                            node2 = padded1_pointer[temp[0], temp[1]-1]
+                            numofcompar += 1
+                            score += self.score_dict[node1.piece_number,
+                                                     JoinDirection.LEFT, node2.piece_number]
+                        if pad_with_piece2[temp[0]+1][temp[1]] == 1:
+                            node1 = padded1_pointer[temp[0], temp[1]]
+                            node2 = padded1_pointer[temp[0]+1, temp[1]]
+                            numofcompar += 1
+                            score += self.score_dict[node1.piece_number,
+                                                     JoinDirection.DOWN, node2.piece_number]
+                        if pad_with_piece2[temp[0]-1][temp[1]] == 1:
+                            node1 = padded1_pointer[temp[0], temp[1]]
+                            node2 = padded1_pointer[temp[0]-1, temp[1]]
+                            numofcompar += 1
+                            score += self.score_dict[node1.piece_number,
+                                                     JoinDirection.UP, node2.piece_number]
+                    score = score/numofcompar
+                    if score < self.best_connection_found_so_far.score:
+                        self.best_connection_found_so_far.setThings(
+                            padded1_pointer, compare_segment, score, self, combined_pieces)
+        return self.best_connection_found_so_far
+
+    def calculateConnectionsKruskal(self, compare_segment):
         if (self.myownNumber, compare_segment.myownNumber) in self.connections_dict:
             return self.connections_dict[(self.myownNumber, compare_segment.myownNumber)]
         h1 = self.binary_connection_matrix.shape[0]
@@ -363,7 +447,6 @@ class Segment:
                         padded1_pointer[first][second] = temp_pointer[storeing[0], storeing[1]]
                     for i in range(0, len(store[0])):
                         temp = [store[0][i], store[1][i]]
-                        # piece two, direction
                         if pad_with_piece2[temp[0]][temp[1]+1] == 1:
                             node1 = padded1_pointer[temp[0], temp[1]]
                             node2 = padded1_pointer[temp[0], temp[1]+1]
@@ -390,11 +473,8 @@ class Segment:
                                                      JoinDirection.UP, node2.piece_number]
                     score = score/numofcompar
                     if score < self.best_connection_found_so_far.score:
-                        self.best_connection_found_so_far.pic_connection_matix = padded1_pointer
-                        self.best_connection_found_so_far.binary_connection_matrix = combined_pieces
-                        self.best_connection_found_so_far.score = score
-                        self.best_connection_found_so_far.own_segment = self
-                        self.best_connection_found_so_far.join_segment = compare_segment
+                        self.best_connection_found_so_far.setThings(
+                            padded1_pointer, compare_segment, score, self, combined_pieces)
         self.connections_dict[(
             self.myownNumber, compare_segment.myownNumber)] = self.best_connection_found_so_far
         return self.best_connection_found_so_far
@@ -465,7 +545,7 @@ def findBestConnectionKruskal(segment_list):
     for index, segment1 in enumerate(segment_list):
         for segment2 in segment_list[index+1:]:
             segment1.best_connection_found_so_far = BestConnection()
-            temp = segment1.calculateConnections(segment2)
+            temp = segment1.calculateConnectionsKruskal(segment2)
             if temp.isBetterConnection(best_so_far):
                 best_so_far = temp
     return best_so_far
@@ -474,10 +554,11 @@ def findBestConnectionKruskal(segment_list):
 def findBestConnectionPrim(segment_list, rootSegment):
     best_so_far = BestConnection()
     for segment in segment_list:
-        segment.best_connection_found_so_far = BestConnection()
-        temp = rootSegment.calculateConnections(segment)
-        if temp.isBetterConnection(best_so_far):
-            best_so_far = temp
+        if segment != rootSegment:
+            rootSegment.best_connection_found_so_far = BestConnection()
+            temp = rootSegment.calculateConnectionsPrim(segment)
+            if temp.isBetterConnection(best_so_far):
+                best_so_far = temp
     return best_so_far
 
 
@@ -519,15 +600,15 @@ def saveImage(best_connection, peice_size, round, colortype):
     imsave(imageName, new_image)
     return imageName
 
-# TODO do it with prims and KRUSKALS both ways 
-#TODO USE NODES AND EDGES
+# TODO do it with prims and KRUSKALS both ways
+# TODO USE NODES AND EDGES
 
 
 def main():
     start_time = time.time()  # set up variables
     #parser = setUpArguments()
     picture_file_name = "william.png"  # parser.inputpic
-    length = 120  # parser.length
+    length = 240  # parser.length
     save_segments = True  # parser.savepieces
     image = imread(picture_file_name)  # parser.inputpic
     save_assembly_to_disk = True  # parser.saveassembly:
@@ -563,6 +644,7 @@ def main():
         best_connection.own_segment.pic_connection_matix = best_connection.pic_connection_matix
         best_connection.own_segment.myownNumber += original_size
         segment_list.remove(best_connection.join_segment)
+        root = best_connection.own_segment
         if save_assembly_to_disk:
             updated_picture = ImageTk.PhotoImage(
                 Image.open(saveImage(best_connection, length, round, colorType)))
