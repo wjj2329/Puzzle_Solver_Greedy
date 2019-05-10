@@ -89,6 +89,7 @@ class Segment:
     pic_matrix = None
     score_dict = {}
     connections_dict = {}
+    connections_first_time = []
     binary_connection_matrix = asarray([[1, 0], [0, 0]])
     pic_connection_matix = None
     max_width = 0
@@ -266,6 +267,8 @@ class Segment:
 
     def calculateScoreEuclidean(self, segment):
         size = segment.pic_matrix.shape[0]
+        score_dict=self.score_dict
+        euclideanDistance=self.euclideanDistance
 
         pic_matrix = self.pic_matrix
         self_top = pic_matrix[0:1, :, :]
@@ -281,14 +284,14 @@ class Segment:
 
         own_number = self.piece_number
         join_number = segment.piece_number
-        self.score_dict[own_number, JoinDirection.UP,
-                        join_number] = self.euclideanDistance(self_top, compare_bottom)
-        self.score_dict[own_number, JoinDirection.DOWN,
-                        join_number] = self.euclideanDistance(self_bottom, compare_top)
-        self.score_dict[own_number, JoinDirection.LEFT,
-                        join_number] = self.euclideanDistance(self_left, compare_right)
-        self.score_dict[own_number, JoinDirection.RIGHT,
-                        join_number] = self.euclideanDistance(self_right, compare_left)
+        score_dict[own_number, JoinDirection.UP,
+                        join_number] = euclideanDistance(self_top, compare_bottom)
+        score_dict[own_number, JoinDirection.DOWN,
+                        join_number] = euclideanDistance(self_bottom, compare_top)
+        score_dict[own_number, JoinDirection.LEFT,
+                        join_number] = euclideanDistance(self_left, compare_right)
+        score_dict[own_number, JoinDirection.RIGHT,
+                        join_number] = euclideanDistance(self_right, compare_left)
 
     def checkforcompatibility(self, booleanarray):
         whattokeep = nonzero(booleanarray)
@@ -309,98 +312,54 @@ class Segment:
             return False
         return True
 
-    def printPictureNumberMatrix(self, matrix):
-        matrix = matrix[~all(matrix == 0, axis=1)]
-        idx = argwhere(all(matrix[..., :] == 0, axis=0))
-        matrix = delete(matrix, idx, axis=1)
-        for row in matrix:
-            for val in row:
-                if val == 0:
-                    print(val, end=" ")
-                else:
-                    print(val.piece_number, end=" ")
-            print()
+    # find a way to store connections for first attempt
+    def calculateConnectionsPrim(self, compare_segment):  #need to finish this redesign
+        self_pic_matrix = self.binary_connection_matrix
+        pieces_to_check = self_pic_matrix.nonzero()
+        for x, y in zip(pieces_to_check[0], pieces_to_check[1]):
+            score = 0
+            if self_pic_matrix[x+1][y] == 0:
+                score += self.score_dict[self_pic_matrix[x][y].piece_number,
+                                         JoinDirection.DOWN, compare_segment.piece_number]
+                if self_pic_matrix[x+2][y] != 0:  # check piece to right down and left
+                    score += self.score_dict[compare_segment.piece_number,
+                                             JoinDirection.DOWN, self_pic_matrix[x+2][y].piece_number]
+                if self_pic_matrix[x+1][y+1] != 0:
+                    score += self.score_dict[compare_segment.piece_number,
+                                             JoinDirection.RIGHT, self_pic_matrix[x+1][y+1].piece_number]
+                if self_pic_matrix[x+1][y-1] != 0:
+                    score += self.score_dict[compare_segment.piece_number,
+                                             JoinDirection.LEFT, self_pic_matrix[x+1][y-1].piece_number]
+            if self_pic_matrix[x-1][y] == 0:
+                score += self.score_dict[self_pic_matrix[x][y],
+                                         JoinDirection.UP, compare_segment.piece_number]
+                if self_pic_matrix[x-2][y] != 0:  # check piece to right down and left
+                    score += self.score_dict[compare_segment.piece_number,
+                                             JoinDirection.UP, self_pic_matrix[x-2][y].piece_number]
+                if self_pic_matrix[x-1][y+1] != 0:
+                    score += self.score_dict[compare_segment.piece_number,
+                                             JoinDirection.RIGHT, self_pic_matrix[x-1][y+1].piece_number]
+                if self_pic_matrix[x-1][y-1] != 0:
+                    score += self.score_dict[compare_segment.piece_number,
+                                             JoinDirection.LEFT, self_pic_matrix[x-1][y-1].piece_number]
+            if self_pic_matrix[x][y+1] == 0:
+                score += self.score_dict[self_pic_matrix[x][y],
+                                         JoinDirection.RIGHT, compare_segment.piece_number]
+                if self_pic_matrix[x][y+2] != 0:
+                    score += self.score_dict[compare_segment.piece_number,
+                                             JoinDirection.RIGHT, self_pic_matrix[x][y+1]]
 
-    def calculateConnectionsPrim(self, compare_segment):  #find a way to store connections for first attempt
-        h1 = self.binary_connection_matrix.shape[0]
-        w1 = self.binary_connection_matrix.shape[1]
-        h2 = compare_segment.binary_connection_matrix.shape[0]
-        w2 = compare_segment.binary_connection_matrix.shape[1]
-        pad_with_piece1 = zeros((h1+2*h2, w1+2*w2))
-        pad_with_piece1[h2:(h2+h1), w2:(w2+w1)] = self.binary_connection_matrix
-        dilation_mask = asarray([[0, 1, 0], [1, 1, 1, ], [0, 1, 0]])
-        result = binary_dilation(
-            input=pad_with_piece1, structure=dilation_mask)
-        neighboring_connections = result - pad_with_piece1
-        for x in range(h1+2*h2-(h2-1)):
-            for y in range(w1+2*w2-(w2-1)):
-                pad_with_piece2 = zeros(neighboring_connections.shape)
-                pad_with_piece2[x:(x+h2), y:(y+w2)
-                                ] = compare_segment.binary_connection_matrix
-                connect_map = logical_and(
-                    neighboring_connections, pad_with_piece2)
-                overlap_map = logical_and(pad_with_piece1, pad_with_piece2)
-                has_connections = numpySum(connect_map[:]) > 0
-                has_overlap = numpySum(overlap_map[:]) > 0
-                combined_pieces = pad_with_piece1+pad_with_piece2
-                if has_connections and not has_overlap and self.checkforcompatibility(combined_pieces):
-                    store = nonzero(pad_with_piece1)
-                    score = 0
-                    numofcompar = 0
-                    padded1_pointer = zeros(
-                        (h1+2*h2, w1+2*w2), dtype="object")
-                    padded1_pointer[h2:(h2+h1), w2:(w2+w1)
-                                    ] = self.pic_connection_matix
-                    temp_pointer = zeros((h1+2*h2, w1+2*w2), dtype="object")
-                    temp_pointer[x:(h2+x), y:(w2+y)
-                                 ] = compare_segment.pic_connection_matix
-                    distancex = 0
-                    distancey = 0
-                    stuff = temp_pointer.nonzero()
-                    pair2 = (connect_map.nonzero()[
-                             0][0], connect_map.nonzero()[1][0])
-                    for y in range(0, len(stuff[0])):
-                        storeing = stuff[0][y], stuff[1][y]
-                        distancex = storeing[0]-pair2[0]
-                        distancey = storeing[1]-pair2[1]
-                        first = pair2[0]+distancex
-                        second = pair2[1]+distancey
-                        padded1_pointer[first][second] = temp_pointer[storeing[0], storeing[1]]
-                    for i in range(0, len(store[0])):
-                        temp = [store[0][i], store[1][i]]
-                        if pad_with_piece2[temp[0]][temp[1]+1] == 1:
-                            node1 = padded1_pointer[temp[0], temp[1]]
-                            node2 = padded1_pointer[temp[0], temp[1]+1]
-                            numofcompar += 1
-                            score += self.score_dict[node1.piece_number,
-                                                     JoinDirection.RIGHT, node2.piece_number]
-                        if pad_with_piece2[temp[0]][temp[1]-1] == 1:
-                            node1 = padded1_pointer[temp[0], temp[1]]
-                            node2 = padded1_pointer[temp[0], temp[1]-1]
-                            numofcompar += 1
-                            score += self.score_dict[node1.piece_number,
-                                                     JoinDirection.LEFT, node2.piece_number]
-                        if pad_with_piece2[temp[0]+1][temp[1]] == 1:
-                            node1 = padded1_pointer[temp[0], temp[1]]
-                            node2 = padded1_pointer[temp[0]+1, temp[1]]
-                            numofcompar += 1
-                            score += self.score_dict[node1.piece_number,
-                                                     JoinDirection.DOWN, node2.piece_number]
-                        if pad_with_piece2[temp[0]-1][temp[1]] == 1:
-                            node1 = padded1_pointer[temp[0], temp[1]]
-                            node2 = padded1_pointer[temp[0]-1, temp[1]]
-                            numofcompar += 1
-                            score += self.score_dict[node1.piece_number,
-                                                     JoinDirection.UP, node2.piece_number]
-                    score = score/numofcompar
-                    if score < self.best_connection_found_so_far.score:
-                        self.best_connection_found_so_far.setThings(
-                            padded1_pointer, compare_segment, score, self, combined_pieces)
+            if self_pic_matrix[x][y+1] == 0:
+                score += self.score_dict[self_pic_matrix[x][y],
+                                         JoinDirection.LEFT, compare_segment.piece_number]
+
         return self.best_connection_found_so_far
 
-    def calculateConnectionsKruskal(self, compare_segment):
+    def calculateConnectionsKruskal(self, compare_segment): #rename these bad varaible names
         if (self.myownNumber, compare_segment.myownNumber) in self.connections_dict:
             return self.connections_dict[(self.myownNumber, compare_segment.myownNumber)]
+        score_dict = self.score_dict
+        best_connection_found_so_far = self.best_connection_found_so_far
         h1 = self.binary_connection_matrix.shape[0]
         w1 = self.binary_connection_matrix.shape[1]
         h2 = compare_segment.binary_connection_matrix.shape[0]
@@ -433,51 +392,41 @@ class Segment:
                     temp_pointer = zeros((h1+2*h2, w1+2*w2), dtype="object")
                     temp_pointer[x:(h2+x), y:(w2+y)
                                  ] = compare_segment.pic_connection_matix
-                    distancex = 0
-                    distancey = 0
                     stuff = temp_pointer.nonzero()
-                    pair2 = (connect_map.nonzero()[
-                             0][0], connect_map.nonzero()[1][0])
-                    for y in range(0, len(stuff[0])):
-                        storeing = stuff[0][y], stuff[1][y]
-                        distancex = storeing[0]-pair2[0]
-                        distancey = storeing[1]-pair2[1]
-                        first = pair2[0]+distancex
-                        second = pair2[1]+distancey
-                        padded1_pointer[first][second] = temp_pointer[storeing[0], storeing[1]]
-                    for i in range(0, len(store[0])):
-                        temp = [store[0][i], store[1][i]]
-                        if pad_with_piece2[temp[0]][temp[1]+1] == 1:
-                            node1 = padded1_pointer[temp[0], temp[1]]
-                            node2 = padded1_pointer[temp[0], temp[1]+1]
+                    for q, w in zip(stuff[0], stuff[1]):
+                        padded1_pointer[q][w] = temp_pointer[q, w]
+                    for d, h in zip(store[0], store[1]):
+                        if pad_with_piece2[d][h+1] == 1:
+                            node1 = padded1_pointer[d, h]
+                            node2 = padded1_pointer[d, h+1]
                             numofcompar += 1
-                            score += self.score_dict[node1.piece_number,
-                                                     JoinDirection.RIGHT, node2.piece_number]
-                        if pad_with_piece2[temp[0]][temp[1]-1] == 1:
-                            node1 = padded1_pointer[temp[0], temp[1]]
-                            node2 = padded1_pointer[temp[0], temp[1]-1]
+                            score += score_dict[node1.piece_number,
+                                                JoinDirection.RIGHT, node2.piece_number]
+                        if pad_with_piece2[d][h-1] == 1:
+                            node1 = padded1_pointer[d, h]
+                            node2 = padded1_pointer[d, h-1]
                             numofcompar += 1
-                            score += self.score_dict[node1.piece_number,
-                                                     JoinDirection.LEFT, node2.piece_number]
-                        if pad_with_piece2[temp[0]+1][temp[1]] == 1:
-                            node1 = padded1_pointer[temp[0], temp[1]]
-                            node2 = padded1_pointer[temp[0]+1, temp[1]]
+                            score += score_dict[node1.piece_number,
+                                                JoinDirection.LEFT, node2.piece_number]
+                        if pad_with_piece2[d+1][h] == 1:
+                            node1 = padded1_pointer[d, h]
+                            node2 = padded1_pointer[d+1, h]
                             numofcompar += 1
-                            score += self.score_dict[node1.piece_number,
-                                                     JoinDirection.DOWN, node2.piece_number]
-                        if pad_with_piece2[temp[0]-1][temp[1]] == 1:
-                            node1 = padded1_pointer[temp[0], temp[1]]
-                            node2 = padded1_pointer[temp[0]-1, temp[1]]
+                            score += score_dict[node1.piece_number,
+                                                JoinDirection.DOWN, node2.piece_number]
+                        if pad_with_piece2[d-1][h] == 1:
+                            node1 = padded1_pointer[d, h]
+                            node2 = padded1_pointer[d-1, h]
                             numofcompar += 1
-                            score += self.score_dict[node1.piece_number,
-                                                     JoinDirection.UP, node2.piece_number]
+                            score += score_dict[node1.piece_number,
+                                                JoinDirection.UP, node2.piece_number]
                     score = score/numofcompar
-                    if score < self.best_connection_found_so_far.score:
-                        self.best_connection_found_so_far.setThings(
+                    if score < best_connection_found_so_far.score:
+                        best_connection_found_so_far.setThings(
                             padded1_pointer, compare_segment, score, self, combined_pieces)
         self.connections_dict[(
-            self.myownNumber, compare_segment.myownNumber)] = self.best_connection_found_so_far
-        return self.best_connection_found_so_far
+            self.myownNumber, compare_segment.myownNumber)] = best_connection_found_so_far
+        return best_connection_found_so_far
 
 
 def setUpArguments():
@@ -608,13 +557,13 @@ def main():
     start_time = time.time()  # set up variables
     #parser = setUpArguments()
     picture_file_name = "william.png"  # parser.inputpic
-    length = 240  # parser.length
+    length = 60  # parser.length
     save_segments = True  # parser.savepieces
     image = imread(picture_file_name)  # parser.inputpic
     save_assembly_to_disk = True  # parser.saveassembly:
     show_building_animation = True  # parser.showanimation
     colorType = ColorType.LAB
-    assemblyType = AssemblyType.PRIM
+    assemblyType = AssemblyType.KRUSKAL
     scoreType = ScoreAlgorithum.EUCLIDEAN
 
     if colorType == ColorType.LAB:
@@ -653,7 +602,8 @@ def main():
             w.pack(side="bottom", fill="both", expand="no")
             window.update()
         round += 1
-        print("for round ", round, " i get score of ", best_connection.score)
+        print("for round ", round, " i get score of ",
+              best_connection.score, " it took ", time.time()-start_time)
     elapsed_time_secs = time.time() - start_time
     print("Execution took: %s secs " % elapsed_time_secs)
 
