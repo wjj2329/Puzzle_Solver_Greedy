@@ -545,19 +545,19 @@ def saveImage(best_connection, peice_size, round, colortype):
         new_image[x1:x2, y1:y2, :] = piece_to_assemble
     if colortype == ColorType.LAB:
         new_image = color.lab2rgb(new_image)
-    imageName = "roundTest"+str(round)+".png"
+    imageName = "round"+str(round)+".png"
     imsave(imageName, new_image)
     return imageName
 
 # TODO do it with prims and KRUSKALS both ways
-# TODO USE NODES AND EDGES
+# TODO USE NODES AND EDGES   Multiple edge layers.  Maybe corner pixels have some extra say?
 
 
 def main():
     start_time = time.time()  # set up variables
     #parser = setUpArguments()
-    picture_file_name = "william.png"  # parser.inputpic
-    length = 60  # parser.length
+    picture_file_name = "henry.jpg"  # parser.inputpic
+    length = 15  # parser.length
     save_segments = True  # parser.savepieces
     image = imread(picture_file_name)  # parser.inputpic
     save_assembly_to_disk = True  # parser.saveassembly:
