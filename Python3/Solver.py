@@ -1,6 +1,7 @@
 import argparse
 import numpy as np
 import random
+import copy
 import sys
 import time
 from datetime import timedelta
@@ -267,8 +268,8 @@ class Segment:
 
     def calculateScoreEuclidean(self, segment):
         size = segment.pic_matrix.shape[0]
-        score_dict=self.score_dict
-        euclideanDistance=self.euclideanDistance
+        score_dict = self.score_dict
+        euclideanDistance = self.euclideanDistance
 
         pic_matrix = self.pic_matrix
         self_top = pic_matrix[0:1, :, :]
@@ -285,13 +286,13 @@ class Segment:
         own_number = self.piece_number
         join_number = segment.piece_number
         score_dict[own_number, JoinDirection.UP,
-                        join_number] = euclideanDistance(self_top, compare_bottom)
+                   join_number] = euclideanDistance(self_top, compare_bottom)
         score_dict[own_number, JoinDirection.DOWN,
-                        join_number] = euclideanDistance(self_bottom, compare_top)
+                   join_number] = euclideanDistance(self_bottom, compare_top)
         score_dict[own_number, JoinDirection.LEFT,
-                        join_number] = euclideanDistance(self_left, compare_right)
+                   join_number] = euclideanDistance(self_left, compare_right)
         score_dict[own_number, JoinDirection.RIGHT,
-                        join_number] = euclideanDistance(self_right, compare_left)
+                   join_number] = euclideanDistance(self_right, compare_left)
 
     def checkforcompatibility(self, booleanarray):
         whattokeep = nonzero(booleanarray)
@@ -313,49 +314,129 @@ class Segment:
         return True
 
     # find a way to store connections for first attempt
-    def calculateConnectionsPrim(self, compare_segment):  #need to finish this redesign
-        self_pic_matrix = self.binary_connection_matrix
+    # need to finish this redesign
+    def calculateConnectionsPrim(self, compare_segment):
+        best_connection_found_so_far = self.best_connection_found_so_far
+        shape = self.binary_connection_matrix.shape
+        self_binary_matrix = np.zeros((shape[0]+4, shape[1]+4))
+        self_binary_matrix[2:shape[0]+2, 2:shape[1] +
+                           2] = self.binary_connection_matrix
+        self_pic_matrix = np.zeros((shape[0]+4, shape[1]+4), dtype="object")
+        self_pic_matrix[2:shape[0]+2, 2:shape[1]+2] = self.pic_connection_matix
         pieces_to_check = self_pic_matrix.nonzero()
         for x, y in zip(pieces_to_check[0], pieces_to_check[1]):
-            score = 0
             if self_pic_matrix[x+1][y] == 0:
+                score = 0
+                numberofsides = 1
                 score += self.score_dict[self_pic_matrix[x][y].piece_number,
                                          JoinDirection.DOWN, compare_segment.piece_number]
                 if self_pic_matrix[x+2][y] != 0:  # check piece to right down and left
                     score += self.score_dict[compare_segment.piece_number,
                                              JoinDirection.DOWN, self_pic_matrix[x+2][y].piece_number]
+                    numberofsides += 1
+
                 if self_pic_matrix[x+1][y+1] != 0:
                     score += self.score_dict[compare_segment.piece_number,
                                              JoinDirection.RIGHT, self_pic_matrix[x+1][y+1].piece_number]
+                    numberofsides += 1
+
                 if self_pic_matrix[x+1][y-1] != 0:
                     score += self.score_dict[compare_segment.piece_number,
                                              JoinDirection.LEFT, self_pic_matrix[x+1][y-1].piece_number]
+                    numberofsides += 1
+                score = score/numberofsides
+                if score < best_connection_found_so_far.score:
+                    temp_pic_matrix = copy.copy(self_pic_matrix)
+                    temp_binary_matrix = copy.copy(self_binary_matrix)
+                    temp_pic_matrix[x+1, y] = compare_segment
+                    temp_binary_matrix[x+1, y] = 1
+                    best_connection_found_so_far.setThings(
+                        temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
+
             if self_pic_matrix[x-1][y] == 0:
-                score += self.score_dict[self_pic_matrix[x][y],
+                score = 0
+                numberofsides = 1
+                score += self.score_dict[self_pic_matrix[x][y].piece_number,
                                          JoinDirection.UP, compare_segment.piece_number]
                 if self_pic_matrix[x-2][y] != 0:  # check piece to right down and left
                     score += self.score_dict[compare_segment.piece_number,
                                              JoinDirection.UP, self_pic_matrix[x-2][y].piece_number]
+                    numberofsides += 1
+
                 if self_pic_matrix[x-1][y+1] != 0:
                     score += self.score_dict[compare_segment.piece_number,
                                              JoinDirection.RIGHT, self_pic_matrix[x-1][y+1].piece_number]
+                    numberofsides += 1
+
                 if self_pic_matrix[x-1][y-1] != 0:
                     score += self.score_dict[compare_segment.piece_number,
                                              JoinDirection.LEFT, self_pic_matrix[x-1][y-1].piece_number]
+                    numberofsides += 1
+                score = score/numberofsides
+                if score < best_connection_found_so_far.score:
+                    temp_pic_matrix = copy.copy(self_pic_matrix)
+                    temp_binary_matrix = copy.copy(self_binary_matrix)
+                    temp_pic_matrix[x-1, y] = compare_segment
+                    temp_binary_matrix[x-1, y] = 1
+                    best_connection_found_so_far.setThings(
+                        temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
             if self_pic_matrix[x][y+1] == 0:
-                score += self.score_dict[self_pic_matrix[x][y],
+                score = 0
+                numberofsides = 1
+                score += self.score_dict[self_pic_matrix[x][y].piece_number,
                                          JoinDirection.RIGHT, compare_segment.piece_number]
                 if self_pic_matrix[x][y+2] != 0:
                     score += self.score_dict[compare_segment.piece_number,
-                                             JoinDirection.RIGHT, self_pic_matrix[x][y+1]]
+                                             JoinDirection.RIGHT, self_pic_matrix[x][y+2].piece_number]
+                    numberofsides += 1
 
-            if self_pic_matrix[x][y+1] == 0:
-                score += self.score_dict[self_pic_matrix[x][y],
+                if self_pic_matrix[x+1][y+1] != 0:
+                    score += self.score_dict[compare_segment.piece_number,
+                                             JoinDirection.DOWN, self_pic_matrix[x+1][y+1].piece_number]
+                    numberofsides += 1
+
+                if self_pic_matrix[x-1][y+1] != 0:
+                    score += self.score_dict[compare_segment.piece_number,
+                                             JoinDirection.UP, self_pic_matrix[x-1][y+1].piece_number]
+                    numberofsides += 1
+                score = score/numberofsides
+
+                if score < best_connection_found_so_far.score:
+                    temp_pic_matrix = copy.copy(self_pic_matrix)
+                    temp_binary_matrix = copy.copy(self_binary_matrix)
+                    temp_pic_matrix[x, y+1] = compare_segment
+                    temp_binary_matrix[x, y+1] = 1
+                    best_connection_found_so_far.setThings(
+                        temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
+            if self_pic_matrix[x][y-1] == 0:
+                score = 0
+                numberofsides = 1
+                score += self.score_dict[self_pic_matrix[x][y].piece_number,
                                          JoinDirection.LEFT, compare_segment.piece_number]
-
+                if self_pic_matrix[x][y-2] != 0:
+                    score += self.score_dict[compare_segment.piece_number,
+                                             JoinDirection.LEFT, self_pic_matrix[x][y-2].piece_number]
+                    numberofsides += 1
+                if self_pic_matrix[x+1][y-1] != 0:
+                    score += self.score_dict[compare_segment.piece_number,
+                                             JoinDirection.DOWN, self_pic_matrix[x+1][y-1].piece_number]
+                    numberofsides += 1
+                if self_pic_matrix[x-1][y-1] != 0:
+                    score += self.score_dict[compare_segment.piece_number,
+                                             JoinDirection.UP, self_pic_matrix[x-1][y-1].piece_number]
+                    numberofsides += 1
+                score = score/numberofsides
+                if score < best_connection_found_so_far.score:
+                    temp_pic_matrix = copy.copy(self_pic_matrix)
+                    temp_binary_matrix = copy.copy(self_binary_matrix)
+                    temp_pic_matrix[x, y-1] = compare_segment
+                    temp_binary_matrix[x, y-1] = 1
+                    best_connection_found_so_far.setThings(
+                        temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
         return self.best_connection_found_so_far
 
-    def calculateConnectionsKruskal(self, compare_segment): #rename these bad varaible names
+    # rename these bad varaible names
+    def calculateConnectionsKruskal(self, compare_segment):
         if (self.myownNumber, compare_segment.myownNumber) in self.connections_dict:
             return self.connections_dict[(self.myownNumber, compare_segment.myownNumber)]
         score_dict = self.score_dict
@@ -556,14 +637,14 @@ def saveImage(best_connection, peice_size, round, colortype):
 def main():
     start_time = time.time()  # set up variables
     #parser = setUpArguments()
-    picture_file_name = "henry.jpg"  # parser.inputpic
-    length = 15  # parser.length
+    picture_file_name = "william.png"  # parser.inputpic
+    length = 60  # parser.length
     save_segments = True  # parser.savepieces
     image = imread(picture_file_name)  # parser.inputpic
     save_assembly_to_disk = True  # parser.saveassembly:
     show_building_animation = True  # parser.showanimation
     colorType = ColorType.LAB
-    assemblyType = AssemblyType.KRUSKAL
+    assemblyType = AssemblyType.PRIM
     scoreType = ScoreAlgorithum.EUCLIDEAN
 
     if colorType == ColorType.LAB:
