@@ -1,7 +1,7 @@
 import argparse
 import numpy as np
 import random
-import copy
+from copy import copy
 import sys
 import time
 from datetime import timedelta
@@ -30,7 +30,7 @@ class ScoreAlgorithum(Enum):
 
 
 class ColorType(Enum):
-    RBG = 1
+    RGB = 1
     LAB = 2
 
 
@@ -211,7 +211,7 @@ class Segment:
         # TODO use python cov not this crap
         #cov = np.linalg.pinv(covariance_piece1)
         # TODO do inverse!!!!!! Also need to use regular RGB!
-        cov = np.linalg.inv(sp.cov(a.T))
+        cov = np.linalg.pinv(sp.cov(a.T))
 
         red2 = r1_piece2-r1_piece1
         green2 = g1_piece2-g1_piece1
@@ -221,7 +221,7 @@ class Segment:
         blueaverage2 = np.average(b1_piece2)
         #cov2 = np.linalg.pinv(covariance_piece2)
 
-        cov2 = np.linalg.inv(sp.cov(z.T))
+        cov2 = np.linalg.pinv(sp.cov(z.T))
 
         score = 0.0
         for i in range(len(red)):  # change this terrible way of doing it
@@ -294,7 +294,7 @@ class Segment:
         score_dict[own_number, JoinDirection.RIGHT,
                    join_number] = euclideanDistance(self_right, compare_left)
 
-    def checkforcompatibility(self, booleanarray):
+    def checkforcompatibility(self, booleanarray): #make sure this works as intended
         whattokeep = nonzero(booleanarray)
         smallestx1 = min(nonzero(booleanarray)[1])
         smallesty1 = min(nonzero(booleanarray)[0])
@@ -313,8 +313,7 @@ class Segment:
             return False
         return True
 
-    # find a way to store connections for first attempt
-    # need to finish this redesign
+    # verify this is correct
     def calculateConnectionsPrim(self, compare_segment):
         best_connection_found_so_far = self.best_connection_found_so_far
         shape = self.binary_connection_matrix.shape
@@ -324,116 +323,123 @@ class Segment:
         self_pic_matrix = np.zeros((shape[0]+4, shape[1]+4), dtype="object")
         self_pic_matrix[2:shape[0]+2, 2:shape[1]+2] = self.pic_connection_matix
         pieces_to_check = self_pic_matrix.nonzero()
+        score_dict = self.score_dict
+        checkforcompatibility = self.checkforcompatibility
+        compare_segment_piece_number=compare_segment.piece_number
         for x, y in zip(pieces_to_check[0], pieces_to_check[1]):
             if self_pic_matrix[x+1][y] == 0:
                 score = 0
                 numberofsides = 1
-                score += self.score_dict[self_pic_matrix[x][y].piece_number,
-                                         JoinDirection.DOWN, compare_segment.piece_number]
+                score += score_dict[self_pic_matrix[x][y].piece_number,
+                                    JoinDirection.DOWN, compare_segment_piece_number]
                 if self_pic_matrix[x+2][y] != 0:  # check piece to right down and left
-                    score += self.score_dict[compare_segment.piece_number,
-                                             JoinDirection.DOWN, self_pic_matrix[x+2][y].piece_number]
+                    score += score_dict[compare_segment_piece_number,
+                                        JoinDirection.DOWN, self_pic_matrix[x+2][y].piece_number]
                     numberofsides += 1
 
                 if self_pic_matrix[x+1][y+1] != 0:
-                    score += self.score_dict[compare_segment.piece_number,
-                                             JoinDirection.RIGHT, self_pic_matrix[x+1][y+1].piece_number]
+                    score += score_dict[compare_segment_piece_number,
+                                        JoinDirection.RIGHT, self_pic_matrix[x+1][y+1].piece_number]
                     numberofsides += 1
 
                 if self_pic_matrix[x+1][y-1] != 0:
-                    score += self.score_dict[compare_segment.piece_number,
-                                             JoinDirection.LEFT, self_pic_matrix[x+1][y-1].piece_number]
+                    score += score_dict[compare_segment_piece_number,
+                                        JoinDirection.LEFT, self_pic_matrix[x+1][y-1].piece_number]
                     numberofsides += 1
                 score = score/numberofsides
                 if score < best_connection_found_so_far.score:
-                    temp_pic_matrix = copy.copy(self_pic_matrix)
-                    temp_binary_matrix = copy.copy(self_binary_matrix)
+                    temp_pic_matrix = copy(self_pic_matrix)
+                    temp_binary_matrix = copy(self_binary_matrix)
                     temp_pic_matrix[x+1, y] = compare_segment
                     temp_binary_matrix[x+1, y] = 1
-                    best_connection_found_so_far.setThings(
-                        temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
+                    if checkforcompatibility(temp_binary_matrix):
+                        best_connection_found_so_far.setThings(
+                            temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
 
             if self_pic_matrix[x-1][y] == 0:
                 score = 0
                 numberofsides = 1
-                score += self.score_dict[self_pic_matrix[x][y].piece_number,
-                                         JoinDirection.UP, compare_segment.piece_number]
+                score += score_dict[self_pic_matrix[x][y].piece_number,
+                                    JoinDirection.UP, compare_segment_piece_number]
                 if self_pic_matrix[x-2][y] != 0:  # check piece to right down and left
-                    score += self.score_dict[compare_segment.piece_number,
-                                             JoinDirection.UP, self_pic_matrix[x-2][y].piece_number]
+                    score += score_dict[compare_segment_piece_number,
+                                        JoinDirection.UP, self_pic_matrix[x-2][y].piece_number]
                     numberofsides += 1
 
                 if self_pic_matrix[x-1][y+1] != 0:
-                    score += self.score_dict[compare_segment.piece_number,
-                                             JoinDirection.RIGHT, self_pic_matrix[x-1][y+1].piece_number]
+                    score += score_dict[compare_segment_piece_number,
+                                        JoinDirection.RIGHT, self_pic_matrix[x-1][y+1].piece_number]
                     numberofsides += 1
 
                 if self_pic_matrix[x-1][y-1] != 0:
-                    score += self.score_dict[compare_segment.piece_number,
-                                             JoinDirection.LEFT, self_pic_matrix[x-1][y-1].piece_number]
+                    score += score_dict[compare_segment_piece_number,
+                                        JoinDirection.LEFT, self_pic_matrix[x-1][y-1].piece_number]
                     numberofsides += 1
                 score = score/numberofsides
                 if score < best_connection_found_so_far.score:
-                    temp_pic_matrix = copy.copy(self_pic_matrix)
-                    temp_binary_matrix = copy.copy(self_binary_matrix)
+                    temp_pic_matrix = copy(self_pic_matrix)
+                    temp_binary_matrix = copy(self_binary_matrix)
                     temp_pic_matrix[x-1, y] = compare_segment
                     temp_binary_matrix[x-1, y] = 1
-                    best_connection_found_so_far.setThings(
-                        temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
+                    if checkforcompatibility(temp_binary_matrix):
+                        best_connection_found_so_far.setThings(
+                            temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
             if self_pic_matrix[x][y+1] == 0:
                 score = 0
                 numberofsides = 1
-                score += self.score_dict[self_pic_matrix[x][y].piece_number,
-                                         JoinDirection.RIGHT, compare_segment.piece_number]
+                score += score_dict[self_pic_matrix[x][y].piece_number,
+                                    JoinDirection.RIGHT, compare_segment_piece_number]
                 if self_pic_matrix[x][y+2] != 0:
-                    score += self.score_dict[compare_segment.piece_number,
-                                             JoinDirection.RIGHT, self_pic_matrix[x][y+2].piece_number]
+                    score += score_dict[compare_segment_piece_number,
+                                        JoinDirection.RIGHT, self_pic_matrix[x][y+2].piece_number]
                     numberofsides += 1
 
                 if self_pic_matrix[x+1][y+1] != 0:
-                    score += self.score_dict[compare_segment.piece_number,
-                                             JoinDirection.DOWN, self_pic_matrix[x+1][y+1].piece_number]
+                    score += score_dict[compare_segment_piece_number,
+                                        JoinDirection.DOWN, self_pic_matrix[x+1][y+1].piece_number]
                     numberofsides += 1
 
                 if self_pic_matrix[x-1][y+1] != 0:
-                    score += self.score_dict[compare_segment.piece_number,
-                                             JoinDirection.UP, self_pic_matrix[x-1][y+1].piece_number]
+                    score += score_dict[compare_segment_piece_number,
+                                        JoinDirection.UP, self_pic_matrix[x-1][y+1].piece_number]
                     numberofsides += 1
                 score = score/numberofsides
 
                 if score < best_connection_found_so_far.score:
-                    temp_pic_matrix = copy.copy(self_pic_matrix)
-                    temp_binary_matrix = copy.copy(self_binary_matrix)
+                    temp_pic_matrix = copy(self_pic_matrix)
+                    temp_binary_matrix = copy(self_binary_matrix)
                     temp_pic_matrix[x, y+1] = compare_segment
                     temp_binary_matrix[x, y+1] = 1
-                    best_connection_found_so_far.setThings(
-                        temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
+                    if checkforcompatibility(temp_binary_matrix):
+                        best_connection_found_so_far.setThings(
+                            temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
             if self_pic_matrix[x][y-1] == 0:
                 score = 0
                 numberofsides = 1
-                score += self.score_dict[self_pic_matrix[x][y].piece_number,
-                                         JoinDirection.LEFT, compare_segment.piece_number]
+                score += score_dict[self_pic_matrix[x][y].piece_number,
+                                    JoinDirection.LEFT, compare_segment_piece_number]
                 if self_pic_matrix[x][y-2] != 0:
-                    score += self.score_dict[compare_segment.piece_number,
-                                             JoinDirection.LEFT, self_pic_matrix[x][y-2].piece_number]
+                    score += score_dict[compare_segment_piece_number,
+                                        JoinDirection.LEFT, self_pic_matrix[x][y-2].piece_number]
                     numberofsides += 1
                 if self_pic_matrix[x+1][y-1] != 0:
-                    score += self.score_dict[compare_segment.piece_number,
-                                             JoinDirection.DOWN, self_pic_matrix[x+1][y-1].piece_number]
+                    score += score_dict[compare_segment_piece_number,
+                                        JoinDirection.DOWN, self_pic_matrix[x+1][y-1].piece_number]
                     numberofsides += 1
                 if self_pic_matrix[x-1][y-1] != 0:
-                    score += self.score_dict[compare_segment.piece_number,
-                                             JoinDirection.UP, self_pic_matrix[x-1][y-1].piece_number]
+                    score += score_dict[compare_segment_piece_number,
+                                        JoinDirection.UP, self_pic_matrix[x-1][y-1].piece_number]
                     numberofsides += 1
                 score = score/numberofsides
                 if score < best_connection_found_so_far.score:
-                    temp_pic_matrix = copy.copy(self_pic_matrix)
-                    temp_binary_matrix = copy.copy(self_binary_matrix)
+                    temp_pic_matrix = copy(self_pic_matrix)
+                    temp_binary_matrix = copy(self_binary_matrix)
                     temp_pic_matrix[x, y-1] = compare_segment
                     temp_binary_matrix[x, y-1] = 1
-                    best_connection_found_so_far.setThings(
-                        temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
-        return self.best_connection_found_so_far
+                    if checkforcompatibility(temp_binary_matrix):
+                        best_connection_found_so_far.setThings(
+                            temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
+        return best_connection_found_so_far
 
     # rename these bad varaible names
     def calculateConnectionsKruskal(self, compare_segment):
@@ -550,7 +556,7 @@ def breakUpImage(image, length, save_segments, colortype):
                            num_of_pieces_height, piece_num, piece_num))
             piece_num += 1
             if save_segments:
-                if colortype == ColorType.RBG:
+                if colortype == ColorType.RGB:
                     imsave(str(x)+"_"+str(y)+".png", save)
                 if colortype == ColorType.LAB:
                     imsave(str(x)+"_"+str(y)+".png", color.lab2rgb(save))
@@ -592,7 +598,7 @@ def findBestConnectionPrim(segment_list, rootSegment):
     return best_so_far
 
 
-# no idea how to find the best one to start,  will do random for now!
+# no idea how to find the best one to start,  will do random for now! Myabe find piece with best connections
 def findBestRootSegment(segment_list):
     return random.choice(segment_list)
 
@@ -645,7 +651,7 @@ def main():
     show_building_animation = True  # parser.showanimation
     colorType = ColorType.LAB
     assemblyType = AssemblyType.PRIM
-    scoreType = ScoreAlgorithum.EUCLIDEAN
+    scoreType = ScoreAlgorithum.MAHALANOBIS
 
     if colorType == ColorType.LAB:
         image = color.rgb2lab(image)
