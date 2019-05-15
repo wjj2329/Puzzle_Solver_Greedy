@@ -24,6 +24,11 @@ class JoinDirection(Enum):
     RIGHT = 4
 
 
+class CompareWithOtherSegments(Enum):
+    ONLY_BEST = 1
+    COMPARE_WITH_SECOND = 2
+
+
 class ScoreAlgorithum(Enum):
     EUCLIDEAN = 1
     MAHALANOBIS = 2
@@ -45,6 +50,7 @@ class BestConnection:
     score = sys.maxsize
     own_segment = None
     binary_connection_matrix = None
+    second_best_score = sys.maxsize
 
     def __init__(self, own_segment=None, pic_connection_matix=None, join_segment=None, binary_connection_matrix=None):
         self.own_segment = own_segment
@@ -53,14 +59,18 @@ class BestConnection:
         self.binary_connection_matrix = binary_connection_matrix
 
     def setThings(self, pic_connection_matix, join_segment, score, own_segment, binary_connection_matrix):
+        self.second_best_score = self.score
         self.pic_connection_matix = pic_connection_matix
         self.join_segment = join_segment
         self.score = score
         self.own_segment = own_segment
         self.binary_connection_matrix = binary_connection_matrix
 
-    def isBetterConnection(self, otherConnection):
-        return self.score < otherConnection.score
+    def isBetterConnection(self, otherConnection, compare_type):
+        if compare_type == CompareWithOtherSegments.ONLY_BEST:
+            return self.score < otherConnection.score
+        elif compare_type == CompareWithOtherSegments.COMPARE_WITH_SECOND: #not this but something to use this ratio with the score
+            return self.score*(1/(self.score/self.second_best_score)) <otherConnection.score*(1/(otherConnection.score/otherConnection.second_best_score))    
 
     def setNodeContents(self, my_list):
         my_list.remove(self.own_segment)
@@ -294,7 +304,8 @@ class Segment:
         score_dict[own_number, JoinDirection.RIGHT,
                    join_number] = euclideanDistance(self_right, compare_left)
 
-    def checkforcompatibility(self, booleanarray): #make sure this works as intended
+    # make sure this works as intended
+    def checkforcompatibility(self, booleanarray):
         whattokeep = nonzero(booleanarray)
         smallestx1 = min(nonzero(booleanarray)[1])
         smallesty1 = min(nonzero(booleanarray)[0])
@@ -325,7 +336,7 @@ class Segment:
         pieces_to_check = self_pic_matrix.nonzero()
         score_dict = self.score_dict
         checkforcompatibility = self.checkforcompatibility
-        compare_segment_piece_number=compare_segment.piece_number
+        compare_segment_piece_number = compare_segment.piece_number
         for x, y in zip(pieces_to_check[0], pieces_to_check[1]):
             if self_pic_matrix[x+1][y] == 0:
                 score = 0
@@ -576,24 +587,24 @@ def calculateScores(segment_list, score_algorithum):
                     segment1.calculateScoreMahalonbis(segment2)
 
 
-def findBestConnectionKruskal(segment_list):
+def findBestConnectionKruskal(segment_list, compare_type):
     best_so_far = BestConnection()
     for index, segment1 in enumerate(segment_list):
         for segment2 in segment_list[index+1:]:
             segment1.best_connection_found_so_far = BestConnection()
             temp = segment1.calculateConnectionsKruskal(segment2)
-            if temp.isBetterConnection(best_so_far):
+            if temp.isBetterConnection(best_so_far,compare_type):
                 best_so_far = temp
     return best_so_far
 
 
-def findBestConnectionPrim(segment_list, rootSegment):
+def findBestConnectionPrim(segment_list, rootSegment,compare_type):
     best_so_far = BestConnection()
     for segment in segment_list:
         if segment != rootSegment:
             rootSegment.best_connection_found_so_far = BestConnection()
             temp = rootSegment.calculateConnectionsPrim(segment)
-            if temp.isBetterConnection(best_so_far):
+            if temp.isBetterConnection(best_so_far,compare_type):
                 best_so_far = temp
     return best_so_far
 
@@ -636,22 +647,22 @@ def saveImage(best_connection, peice_size, round, colortype):
     imsave(imageName, new_image)
     return imageName
 
-# TODO do it with prims and KRUSKALS both ways
-# TODO USE NODES AND EDGES   Multiple edge layers.  Maybe corner pixels have some extra say?
+# TODO  Multiple edge layers.  Maybe corner pixels have some extra say?
 
 
 def main():
     start_time = time.time()  # set up variables
     #parser = setUpArguments()
     picture_file_name = "william.png"  # parser.inputpic
-    length = 60  # parser.length
+    length = 240  # parser.length
     save_segments = True  # parser.savepieces
     image = imread(picture_file_name)  # parser.inputpic
     save_assembly_to_disk = True  # parser.saveassembly:
     show_building_animation = True  # parser.showanimation
     colorType = ColorType.LAB
-    assemblyType = AssemblyType.PRIM
-    scoreType = ScoreAlgorithum.MAHALANOBIS
+    assemblyType = AssemblyType.KRUSKAL
+    scoreType = ScoreAlgorithum.EUCLIDEAN
+    compareType = CompareWithOtherSegments.COMPARE_WITH_SECOND
 
     if colorType == ColorType.LAB:
         image = color.rgb2lab(image)
@@ -672,9 +683,9 @@ def main():
     while len(segment_list) > 1:
         best_connection = None
         if assemblyType == AssemblyType.KRUSKAL:
-            best_connection = findBestConnectionKruskal(segment_list)
+            best_connection = findBestConnectionKruskal(segment_list,compareType)
         if assemblyType == AssemblyType.PRIM:
-            best_connection = findBestConnectionPrim(segment_list, root)
+            best_connection = findBestConnectionPrim(segment_list, root,compareType)
         best_connection.stripZeros()
         best_connection.own_segment.binary_connection_matrix = best_connection.binary_connection_matrix
         best_connection.own_segment.pic_connection_matix = best_connection.pic_connection_matix
@@ -690,7 +701,7 @@ def main():
             window.update()
         round += 1
         print("for round ", round, " i get score of ",
-              best_connection.score, " it took ", time.time()-start_time)
+              best_connection.score, "the ratio for first to second best is ",best_connection.score/best_connection.second_best_score, " it took ", time.time()-start_time)
     elapsed_time_secs = time.time() - start_time
     print("Execution took: %s secs " % elapsed_time_secs)
 
