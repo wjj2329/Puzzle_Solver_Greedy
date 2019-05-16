@@ -69,8 +69,9 @@ class BestConnection:
     def isBetterConnection(self, otherConnection, compare_type):
         if compare_type == CompareWithOtherSegments.ONLY_BEST:
             return self.score < otherConnection.score
-        elif compare_type == CompareWithOtherSegments.COMPARE_WITH_SECOND: #not this but something to use this ratio with the score
-            return self.score*(1/(self.score/self.second_best_score)) <otherConnection.score*(1/(otherConnection.score/otherConnection.second_best_score))    
+        # not this but something to use this ratio with the score
+        elif compare_type == CompareWithOtherSegments.COMPARE_WITH_SECOND:
+            return (self.score*(1/(self.score/self.second_best_score))) < (otherConnection.score*(1/(otherConnection.score/otherConnection.second_best_score)))
 
     def setNodeContents(self, my_list):
         my_list.remove(self.own_segment)
@@ -108,13 +109,14 @@ class Segment:
     best_connection_found_so_far = BestConnection()
     piece_number = -1
 
-    def __init__(self, pic_matrix, max_width, max_height, piece_number, myownNumber):
+    def __init__(self, pic_matrix, max_width, max_height, piece_number, myownNumber, score_dict):
         self.pic_matrix = pic_matrix
         self.pic_connection_matix = asarray([[self, 0], [0, 0]])
         self.max_width = max_width
         self.max_height = max_height
         self.piece_number = piece_number
         self.myownNumber = myownNumber
+        self.score_dict=score_dict
 
     def euclideanDistance(self, a, b):
         a = a[0].astype(np.float64)  # underflows would occur without this
@@ -303,6 +305,15 @@ class Segment:
                    join_number] = euclideanDistance(self_left, compare_right)
         score_dict[own_number, JoinDirection.RIGHT,
                    join_number] = euclideanDistance(self_right, compare_left)
+        score_dict[join_number, JoinDirection.DOWN,
+                   own_number] = euclideanDistance(self_top, compare_bottom)
+        score_dict[join_number, JoinDirection.UP,
+                   own_number] = euclideanDistance(self_bottom, compare_top)
+        score_dict[join_number, JoinDirection.RIGHT,
+                   own_number] = euclideanDistance(self_left, compare_right)
+        score_dict[join_number, JoinDirection.LEFT,
+                   own_number] = euclideanDistance(self_right, compare_left)
+
 
     # make sure this works as intended
     def checkforcompatibility(self, booleanarray):
@@ -560,11 +571,12 @@ def breakUpImage(image, length, save_segments, colortype):
     num_of_pieces_width = int(dimensions[0]/length)
     num_of_pieces_height = int(dimensions[1]/length)
     append = segments.append
+    score_dict={}
     for x in range(num_of_pieces_width):
         for y in range(num_of_pieces_height):
             save = image[picX: picX+length, picY: picY+length, :]
             append(Segment(save, num_of_pieces_width,
-                           num_of_pieces_height, piece_num, piece_num))
+                           num_of_pieces_height, piece_num, piece_num, score_dict))
             piece_num += 1
             if save_segments:
                 if colortype == ColorType.RGB:
@@ -578,13 +590,12 @@ def breakUpImage(image, length, save_segments, colortype):
 
 
 def calculateScores(segment_list, score_algorithum):
-    for segment1 in segment_list:
-        for segment2 in segment_list:
-            if segment1 != segment2:
-                if score_algorithum == ScoreAlgorithum.EUCLIDEAN:
-                    segment1.calculateScoreEuclidean(segment2)
-                if score_algorithum == ScoreAlgorithum.MAHALANOBIS:
-                    segment1.calculateScoreMahalonbis(segment2)
+    for index, segment1 in enumerate(segment_list):
+        for segment2 in segment_list[index+1:]:
+            if score_algorithum == ScoreAlgorithum.EUCLIDEAN:
+                segment1.calculateScoreEuclidean(segment2)
+            if score_algorithum == ScoreAlgorithum.MAHALANOBIS:
+                segment1.calculateScoreMahalonbis(segment2)
 
 
 def findBestConnectionKruskal(segment_list, compare_type):
@@ -593,18 +604,18 @@ def findBestConnectionKruskal(segment_list, compare_type):
         for segment2 in segment_list[index+1:]:
             segment1.best_connection_found_so_far = BestConnection()
             temp = segment1.calculateConnectionsKruskal(segment2)
-            if temp.isBetterConnection(best_so_far,compare_type):
+            if temp.isBetterConnection(best_so_far, compare_type):
                 best_so_far = temp
     return best_so_far
 
 
-def findBestConnectionPrim(segment_list, rootSegment,compare_type):
+def findBestConnectionPrim(segment_list, rootSegment, compare_type):
     best_so_far = BestConnection()
     for segment in segment_list:
         if segment != rootSegment:
             rootSegment.best_connection_found_so_far = BestConnection()
             temp = rootSegment.calculateConnectionsPrim(segment)
-            if temp.isBetterConnection(best_so_far,compare_type):
+            if temp.isBetterConnection(best_so_far, compare_type):
                 best_so_far = temp
     return best_so_far
 
@@ -654,20 +665,22 @@ def main():
     start_time = time.time()  # set up variables
     #parser = setUpArguments()
     picture_file_name = "william.png"  # parser.inputpic
-    length = 240  # parser.length
+    length = 60  # parser.length
     save_segments = True  # parser.savepieces
     image = imread(picture_file_name)  # parser.inputpic
     save_assembly_to_disk = True  # parser.saveassembly:
     show_building_animation = True  # parser.showanimation
     colorType = ColorType.LAB
-    assemblyType = AssemblyType.KRUSKAL
+    assemblyType = AssemblyType.PRIM
     scoreType = ScoreAlgorithum.EUCLIDEAN
-    compareType = CompareWithOtherSegments.COMPARE_WITH_SECOND
+    compareType = CompareWithOtherSegments.ONLY_BEST
 
     if colorType == ColorType.LAB:
         image = color.rgb2lab(image)
     segment_list = breakUpImage(image, length, save_segments, colorType)
     calculateScores(segment_list, scoreType)
+    elapsed_time_secs = time.time() - start_time
+    print("Calculate scores took: %s secs " % elapsed_time_secs)
     window, w = None, None
     if show_building_animation:
         window = tkinter.Tk()
@@ -683,9 +696,11 @@ def main():
     while len(segment_list) > 1:
         best_connection = None
         if assemblyType == AssemblyType.KRUSKAL:
-            best_connection = findBestConnectionKruskal(segment_list,compareType)
+            best_connection = findBestConnectionKruskal(
+                segment_list, compareType)
         if assemblyType == AssemblyType.PRIM:
-            best_connection = findBestConnectionPrim(segment_list, root,compareType)
+            best_connection = findBestConnectionPrim(
+                segment_list, root, compareType)
         best_connection.stripZeros()
         best_connection.own_segment.binary_connection_matrix = best_connection.binary_connection_matrix
         best_connection.own_segment.pic_connection_matix = best_connection.pic_connection_matix
@@ -701,7 +716,7 @@ def main():
             window.update()
         round += 1
         print("for round ", round, " i get score of ",
-              best_connection.score, "the ratio for first to second best is ",best_connection.score/best_connection.second_best_score, " it took ", time.time()-start_time)
+              best_connection.score, "the ratio for first to second best is ", best_connection.score/best_connection.second_best_score, " it took ", time.time()-start_time)
     elapsed_time_secs = time.time() - start_time
     print("Execution took: %s secs " % elapsed_time_secs)
 
