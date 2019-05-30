@@ -33,6 +33,7 @@ class CompareWithOtherSegments(Enum):
 class ScoreAlgorithum(Enum):
     EUCLIDEAN = 1
     MAHALANOBIS = 2
+    GRADIENT_EUCLIDEAN = 3
 
 
 class ColorType(Enum):
@@ -109,8 +110,9 @@ class Segment:
     max_height = 0
     best_connection_found_so_far = BestConnection()
     piece_number = -1
+    mal_data = None
 
-    def __init__(self, pic_matrix, max_width, max_height, piece_number, myownNumber, score_dict):
+    def __init__(self, pic_matrix, max_width, max_height, piece_number, myownNumber, score_dict, mal_data=None):
         self.pic_matrix = pic_matrix
         self.pic_connection_matix = asarray([[self, 0], [0, 0]])
         self.max_width = max_width
@@ -118,6 +120,7 @@ class Segment:
         self.piece_number = piece_number
         self.myownNumber = myownNumber
         self.score_dict = score_dict
+        self.mal_data = mal_data
 
     def euclideanDistance(self, a, b):
         a = a[0].astype(np.float64)  # underflows would occur without this
@@ -131,33 +134,99 @@ class Segment:
         z = z[0].astype(np.int16)
         z2 = z2[0].astype(np.int16)
 
-        cov = np.linalg.pinv(sp.cov(a.T))
-        cov2 = np.linalg.pinv(sp.cov(z.T))
+        cov = np.linalg.pinv(sp.cov((a).T))
+        cov2 = np.linalg.pinv(sp.cov((z).T))
 
-        red_average_1 = np.average(a[:, 0]-a2[:,0])
-        green_average_1 = np.average(a[:, 1]-a2[:,1])
-        blue_average_1 = np.average(a[:, 2]-a2[:,2])
+        red_average_1 = np.average(a[:, 0]-a2[:, 0])
+        green_average_1 = np.average(a[:, 1]-a2[:, 1])
+        blue_average_1 = np.average(a[:, 2]-a2[:, 2])
 
-        red_average_2 = np.average(z[:, 0]-z2[:,0])
-        green_average_2 = np.average(z[:, 1]-z2[:,1])
-        blue_average_2 = np.average(z[:, 2]-z2[:,2])
+        red_average_2 = np.average(z[:, 0]-z2[:, 0])
+        green_average_2 = np.average(z[:, 1]-z2[:, 1])
+        blue_average_2 = np.average(z[:, 2]-z2[:, 2])
 
         score = 0.0
-        testr=a[:,0]-z[:,0]
-        testg=a[:,1]-z[:,1]
-        testb=a[:,2]-z[:,2]
+        testr1 = a[:, 0]-z[:, 0]
+        testg1 = a[:, 1]-z[:, 1]
+        testb1 = a[:, 2]-z[:, 2]
 
-        for i in range(len(a)): 
+        testr2 = z[:, 0]-a[:, 0]
+        testg2 = z[:, 1]-a[:, 1]
+        testb2 = z[:, 2]-a[:, 2]
+
+        for i in range(len(a)):
             mymatrix = np.matrix(
-                [red_average_1 - testr[i], green_average_1-testg[i], blue_average_1-testb[i]])
+                [testr1[i]-red_average_1, testg1[i]-green_average_1, testb1[i]-blue_average_1])
             mymatrix2 = np.matrix(
-                [red_average_2 - testr[i], green_average_2-testg[i], blue_average_2-testb[i]])
+                [testr2[i]-red_average_2, testg2[i]-green_average_2, testb2[i]-blue_average_2])
             score += math.sqrt(abs(mymatrix*cov2*mymatrix.T))
             score += math.sqrt(abs(mymatrix2*cov*mymatrix2.T))
         return score
 
-#http://chenlab.ece.cornell.edu/people/Andy/publications/Andy_files/Gallagher_cvpr2012_puzzleAssembly.pdf
-#https://jamesmccaffrey.wordpress.com/2017/11/09/example-of-calculating-the-mahalanobis-distance/
+    def calculateScoreGradientEuclideanDistance(self, segment):
+        score_dict = self.score_dict
+        euclideanDistance = self.euclideanDistance
+        size = segment.pic_matrix.shape[0]
+        pic_matrix = self.pic_matrix
+        self_top1 = pic_matrix[0:1, :, :]
+        self_top2 = pic_matrix[1:2, :, :]
+        self_left1 = np.rot90(pic_matrix[:, 0:1, :])
+        self_left2 = np.rot90(pic_matrix[:, 1:2, :])
+        self_bottom1 = pic_matrix[size - 1:size, :, :]
+        self_bottom2 = pic_matrix[size-2:size-1, :, :]
+        self_right1 = np.rot90(pic_matrix[:, size - 1:size, :])
+        self_right2 = np.rot90(pic_matrix[:, size - 2:size-1, :])
+
+        segment_matrix = segment.pic_matrix
+        compare_top1 = segment_matrix[0:1, :, :]
+        compare_top2 = segment_matrix[1:2, :, :]
+        compare_left1 = np.rot90(segment_matrix[:, 0:1, :])
+        compare_left2 = np.rot90(segment_matrix[:, 1:2, :])
+        compare_bottom1 = segment_matrix[size - 1:size, :, :]
+        compare_bottom2 = segment_matrix[size - 2:size-1, :, :]
+        compare_right1 = np.rot90(segment_matrix[:, size - 1:size, :])
+        compare_right2 = np.rot90(segment_matrix[:, size-2:size-1, :])
+
+        own_number = self.piece_number
+        join_number = segment.piece_number
+
+        self_top = self_top1-self_top2
+        self_left = self_left1-self_left2
+        self_bottom = self_bottom1-self_bottom2
+        self_right = self_right1-self_right2
+
+        compare_bottom = compare_bottom1-compare_bottom2
+        compare_top = compare_top1-compare_top2
+        compare_left = compare_left1-compare_left2
+        compare_right = compare_right1-compare_right2
+
+        score_dict[own_number, JoinDirection.UP,
+                   join_number] = euclideanDistance(self_top, compare_bottom)
+        score_dict[own_number, JoinDirection.DOWN,
+                   join_number] = euclideanDistance(self_bottom, compare_top)
+        score_dict[own_number, JoinDirection.LEFT,
+                   join_number] = euclideanDistance(self_left, compare_right)
+        score_dict[own_number, JoinDirection.RIGHT,
+                   join_number] = euclideanDistance(self_right, compare_left)
+
+        score_dict[join_number, JoinDirection.DOWN,
+                   own_number] = score_dict[own_number, JoinDirection.UP,
+                                            join_number]
+        score_dict[join_number, JoinDirection.UP,
+                   own_number] = score_dict[own_number, JoinDirection.DOWN,
+                                            join_number]
+        score_dict[join_number, JoinDirection.RIGHT,
+                   own_number] = score_dict[own_number, JoinDirection.LEFT,
+                                            join_number]
+        score_dict[join_number, JoinDirection.LEFT,
+                   own_number] = score_dict[own_number, JoinDirection.RIGHT,
+                                            join_number]
+
+
+# http://chenlab.ece.cornell.edu/people/Andy/publications/Andy_files/Gallagher_cvpr2012_puzzleAssembly.pdf
+# https://jamesmccaffrey.wordpress.com/2017/11/09/example-of-calculating-the-mahalanobis-distance/
+# https://www.python.org/dev/peps/pep-0371/ use this to make it faster
+
     def calculateScoreMahalonbis(self, segment):
         size = segment.pic_matrix.shape[0]
         pic_matrix = self.pic_matrix
@@ -503,11 +572,12 @@ def breakUpImage(image, length, save_segments, colortype):
     num_of_pieces_height = int(dimensions[1]/length)
     append = segments.append
     score_dict = {}
+    mal_dict = {}
     for x in range(num_of_pieces_width):
         for y in range(num_of_pieces_height):
             save = image[picX: picX+length, picY: picY+length, :]
             append(Segment(save, num_of_pieces_width,
-                           num_of_pieces_height, piece_num, piece_num, score_dict))
+                           num_of_pieces_height, piece_num, piece_num, score_dict, mal_dict))
             piece_num += 1
             if save_segments:
                 if colortype == ColorType.RGB:
@@ -522,11 +592,14 @@ def breakUpImage(image, length, save_segments, colortype):
 
 def calculateScores(segment_list, score_algorithum):
     for index, segment1 in enumerate(segment_list):
+        print("caculating score for segment ", segment1.piece_number)
         for segment2 in segment_list[index+1:]:
             if score_algorithum == ScoreAlgorithum.EUCLIDEAN:
                 segment1.calculateScoreEuclidean(segment2)
             if score_algorithum == ScoreAlgorithum.MAHALANOBIS:
                 segment1.calculateScoreMahalonbis(segment2)
+            if score_algorithum ==ScoreAlgorithum.GRADIENT_EUCLIDEAN:
+                segment1.calculateScoreGradientEuclideanDistance(segment2)    
 
 
 def findBestConnectionKruskal(segment_list, compare_type):
@@ -594,22 +667,24 @@ def main():
     start_time = time.time()  # set up variables
     # parser = setUpArguments()
     picture_file_name = "william.png"  # parser.inputpic
-    length = 30  # parser.length
+    length = 240  # parser.length
     save_segments = True  # parser.savepieces
     image = imread(picture_file_name)  # parser.inputpic
     save_assembly_to_disk = True  # parser.saveassembly:
     show_building_animation = True  # parser.showanimation
     colorType = ColorType.RGB
-    assemblyType = AssemblyType.PRIM
-    scoreType = ScoreAlgorithum.MAHALANOBIS
+    assemblyType = AssemblyType.KRUSKAL
+    scoreType = ScoreAlgorithum.GRADIENT_EUCLIDEAN
     compareType = CompareWithOtherSegments.ONLY_BEST
+    show_print_statements = True
 
     if colorType == ColorType.LAB:
         image = color.rgb2lab(image)
     segment_list = breakUpImage(image, length, save_segments, colorType)
     calculateScores(segment_list, scoreType)
     elapsed_time_secs = time.time() - start_time
-    print("Calculate scores took: %s secs " % elapsed_time_secs)
+    if show_print_statements:
+        print("Calculate scores took: %s secs " % elapsed_time_secs)
     window, w = None, None
     if show_building_animation:
         window = tkinter.Tk()
@@ -644,10 +719,12 @@ def main():
             w.pack(side="bottom", fill="both", expand="no")
             window.update()
         round += 1
-        print("for round ", round, " i get score of ",
-              best_connection.score, "the ratio for first to second best is ", best_connection.score/best_connection.second_best_score, " it took ", time.time()-start_time)
-    elapsed_time_secs = time.time() - start_time
-    print("Execution took: %s secs " % elapsed_time_secs)
+        if show_print_statements == True:
+            print("for round ", round, " i get score of ", best_connection.score, "the ratio for first to second best is ",
+                  best_connection.score/best_connection.second_best_score, " it took ", time.time()-start_time)
+    if show_print_statements == True:
+        elapsed_time_secs = time.time() - start_time
+        print("Execution took: %s secs " % elapsed_time_secs)
 
 
 if __name__ == '__main__':
