@@ -16,6 +16,7 @@ from numpy import logical_and, zeros, nonzero, argwhere, delete, asarray
 from numpy import sum as numpySum
 from numpy import all as numpyAll
 from numpy.linalg import norm
+import cv2,cython
 
 
 class JoinDirection(Enum):
@@ -33,7 +34,6 @@ class CompareWithOtherSegments(Enum):
 class ScoreAlgorithum(Enum):
     EUCLIDEAN = 1
     MAHALANOBIS = 2
-    GRADIENT_EUCLIDEAN = 3
 
 
 class ColorType(Enum):
@@ -163,69 +163,12 @@ class Segment:
             score += math.sqrt(abs(mymatrix2*cov*mymatrix2.T))
         return score
 
-    def calculateScoreGradientEuclideanDistance(self, segment):
-        score_dict = self.score_dict
-        euclideanDistance = self.euclideanDistance
-        size = segment.pic_matrix.shape[0]
-        pic_matrix = self.pic_matrix
-        self_top1 = pic_matrix[0:1, :, :]
-        self_top2 = pic_matrix[1:2, :, :]
-        self_left1 = np.rot90(pic_matrix[:, 0:1, :])
-        self_left2 = np.rot90(pic_matrix[:, 1:2, :])
-        self_bottom1 = pic_matrix[size - 1:size, :, :]
-        self_bottom2 = pic_matrix[size-2:size-1, :, :]
-        self_right1 = np.rot90(pic_matrix[:, size - 1:size, :])
-        self_right2 = np.rot90(pic_matrix[:, size - 2:size-1, :])
-
-        segment_matrix = segment.pic_matrix
-        compare_top1 = segment_matrix[0:1, :, :]
-        compare_top2 = segment_matrix[1:2, :, :]
-        compare_left1 = np.rot90(segment_matrix[:, 0:1, :])
-        compare_left2 = np.rot90(segment_matrix[:, 1:2, :])
-        compare_bottom1 = segment_matrix[size - 1:size, :, :]
-        compare_bottom2 = segment_matrix[size - 2:size-1, :, :]
-        compare_right1 = np.rot90(segment_matrix[:, size - 1:size, :])
-        compare_right2 = np.rot90(segment_matrix[:, size-2:size-1, :])
-
-        own_number = self.piece_number
-        join_number = segment.piece_number
-
-        self_top = self_top1-self_top2
-        self_left = self_left1-self_left2
-        self_bottom = self_bottom1-self_bottom2
-        self_right = self_right1-self_right2
-
-        compare_bottom = compare_bottom1-compare_bottom2
-        compare_top = compare_top1-compare_top2
-        compare_left = compare_left1-compare_left2
-        compare_right = compare_right1-compare_right2
-
-        score_dict[own_number, JoinDirection.UP,
-                   join_number] = euclideanDistance(self_top, compare_bottom)
-        score_dict[own_number, JoinDirection.DOWN,
-                   join_number] = euclideanDistance(self_bottom, compare_top)
-        score_dict[own_number, JoinDirection.LEFT,
-                   join_number] = euclideanDistance(self_left, compare_right)
-        score_dict[own_number, JoinDirection.RIGHT,
-                   join_number] = euclideanDistance(self_right, compare_left)
-
-        score_dict[join_number, JoinDirection.DOWN,
-                   own_number] = score_dict[own_number, JoinDirection.UP,
-                                            join_number]
-        score_dict[join_number, JoinDirection.UP,
-                   own_number] = score_dict[own_number, JoinDirection.DOWN,
-                                            join_number]
-        score_dict[join_number, JoinDirection.RIGHT,
-                   own_number] = score_dict[own_number, JoinDirection.LEFT,
-                                            join_number]
-        score_dict[join_number, JoinDirection.LEFT,
-                   own_number] = score_dict[own_number, JoinDirection.RIGHT,
-                                            join_number]
 
 
 # http://chenlab.ece.cornell.edu/people/Andy/publications/Andy_files/Gallagher_cvpr2012_puzzleAssembly.pdf
 # https://jamesmccaffrey.wordpress.com/2017/11/09/example-of-calculating-the-mahalanobis-distance/
 # https://www.python.org/dev/peps/pep-0371/ use this to make it faster
+# https://www.sciencedirect.com/science/article/pii/S131915781830394X gist combo with euclidean
 
     def calculateScoreMahalonbis(self, segment):
         size = segment.pic_matrix.shape[0]
@@ -335,7 +278,7 @@ class Segment:
             return False
         return True
 
-    # verify this is correct
+    #TODO what about a combination of both kruskal and prims like divide into quatars prims?
     def calculateConnectionsPrim(self, compare_segment):
         best_connection_found_so_far = self.best_connection_found_so_far
         shape = self.binary_connection_matrix.shape
@@ -598,8 +541,7 @@ def calculateScores(segment_list, score_algorithum):
                 segment1.calculateScoreEuclidean(segment2)
             if score_algorithum == ScoreAlgorithum.MAHALANOBIS:
                 segment1.calculateScoreMahalonbis(segment2)
-            if score_algorithum ==ScoreAlgorithum.GRADIENT_EUCLIDEAN:
-                segment1.calculateScoreGradientEuclideanDistance(segment2)    
+ 
 
 
 def findBestConnectionKruskal(segment_list, compare_type):
@@ -660,10 +602,27 @@ def saveImage(best_connection, piece_size, round, colortype):
     imsave(imageName, new_image)
     return imageName
 
+
 # TODO  Multiple edge layers.  Maybe corner pixels have some extra say?
+
+class color_image_t: 
+    width=-1
+    height=-1
+    c1=-1		# R 
+    c2=-1		# G
+    c3=-1		# B        
+    def __init__(width, height):
+        self.width=width
+        self.height=height
+          
+
+
+
 
 
 def main():
+    im = Image.open('William.png')
+    return
     start_time = time.time()  # set up variables
     # parser = setUpArguments()
     picture_file_name = "william.png"  # parser.inputpic
@@ -674,7 +633,7 @@ def main():
     show_building_animation = True  # parser.showanimation
     colorType = ColorType.RGB
     assemblyType = AssemblyType.KRUSKAL
-    scoreType = ScoreAlgorithum.GRADIENT_EUCLIDEAN
+    scoreType = ScoreAlgorithum.EUCLIDEAN
     compareType = CompareWithOtherSegments.ONLY_BEST
     show_print_statements = True
 
