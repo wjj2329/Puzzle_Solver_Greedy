@@ -16,7 +16,7 @@ from numpy import logical_and, zeros, nonzero, argwhere, delete, asarray
 from numpy import sum as numpySum
 from numpy import all as numpyAll
 from numpy.linalg import norm
-import cv2,cython
+import subprocess
 
 
 class JoinDirection(Enum):
@@ -34,6 +34,7 @@ class CompareWithOtherSegments(Enum):
 class ScoreAlgorithum(Enum):
     EUCLIDEAN = 1
     MAHALANOBIS = 2
+    GIST_AND_EUCLDEAN = 3
 
 
 class ColorType(Enum):
@@ -110,9 +111,9 @@ class Segment:
     max_height = 0
     best_connection_found_so_far = BestConnection()
     piece_number = -1
-    mal_data = None
+    gist = None
 
-    def __init__(self, pic_matrix, max_width, max_height, piece_number, myownNumber, score_dict, mal_data=None):
+    def __init__(self, pic_matrix, max_width, max_height, piece_number, myownNumber, score_dict, gist):
         self.pic_matrix = pic_matrix
         self.pic_connection_matix = asarray([[self, 0], [0, 0]])
         self.max_width = max_width
@@ -120,13 +121,19 @@ class Segment:
         self.piece_number = piece_number
         self.myownNumber = myownNumber
         self.score_dict = score_dict
-        self.mal_data = mal_data
+        self.gist = gist
 
     def euclideanDistance(self, a, b):
         a = a[0].astype(np.float64)  # underflows would occur without this
         b = b[0].astype(np.float64)
         temp = sum(np.linalg.norm(x - y) for x, y in zip(a, b))
         return temp
+
+    def gistDistance(self, a, b, segment):
+        colorScore = self.euclideanDistance(a, b)
+        gistScore = self.euclideanDistance(
+            np.asarray([self.gist]), np.asarray([segment.gist]))
+        return (colorScore,gistScore)  # NORMALIZE THIS
 
     def mahalanobisDistance(self, a, a2, z, z2):
         a = a[0].astype(np.int16)  # underflows would occur without this
@@ -164,11 +171,13 @@ class Segment:
         return score
 
 
-
 # http://chenlab.ece.cornell.edu/people/Andy/publications/Andy_files/Gallagher_cvpr2012_puzzleAssembly.pdf
 # https://jamesmccaffrey.wordpress.com/2017/11/09/example-of-calculating-the-mahalanobis-distance/
 # https://www.python.org/dev/peps/pep-0371/ use this to make it faster
 # https://www.sciencedirect.com/science/article/pii/S131915781830394X gist combo with euclidean
+
+# Filter the image?  Gausian blur etc?
+
 
     def calculateScoreMahalonbis(self, segment):
         size = segment.pic_matrix.shape[0]
@@ -216,6 +225,47 @@ class Segment:
                         own_number] = self.score_dict[own_number, JoinDirection.RIGHT,
                                                       join_number]
 
+    def calculateScoreGIST(self, segment):
+        size = segment.pic_matrix.shape[0]
+        score_dict = self.score_dict
+        gistDistance = self.gistDistance
+
+        pic_matrix = self.pic_matrix
+        self_top = pic_matrix[0:1, :, :]
+        self_left = np.rot90(pic_matrix[:, 0:1, :])
+        self_bottom = pic_matrix[size - 1:size, :, :]
+        self_right = np.rot90(pic_matrix[:, size - 1:size, :])
+
+        segment_matrix = segment.pic_matrix
+        compare_top = segment_matrix[0:1, :, :]
+        compare_left = np.rot90(segment_matrix[:, 0:1, :])
+        compare_bottom = segment_matrix[size - 1:size, :, :]
+        compare_right = np.rot90(segment_matrix[:, size - 1:size, :])
+
+        own_number = self.piece_number
+        join_number = segment.piece_number
+        score_dict[own_number, JoinDirection.UP,
+                   join_number] = gistDistance(self_top, compare_bottom, segment)
+        score_dict[own_number, JoinDirection.DOWN,
+                   join_number] = gistDistance(self_bottom, compare_top, segment)
+        score_dict[own_number, JoinDirection.LEFT,
+                   join_number] = gistDistance(self_left, compare_right, segment)
+        score_dict[own_number, JoinDirection.RIGHT,
+                   join_number] = gistDistance(self_right, compare_left, segment)
+
+        score_dict[join_number, JoinDirection.DOWN,
+                   own_number] = score_dict[own_number, JoinDirection.UP,
+                                            join_number]
+        score_dict[join_number, JoinDirection.UP,
+                   own_number] = score_dict[own_number, JoinDirection.DOWN,
+                                            join_number]
+        score_dict[join_number, JoinDirection.RIGHT,
+                   own_number] = score_dict[own_number, JoinDirection.LEFT,
+                                            join_number]
+        score_dict[join_number, JoinDirection.LEFT,
+                   own_number] = score_dict[own_number, JoinDirection.RIGHT,
+                                            join_number]
+
     def calculateScoreEuclidean(self, segment):
         size = segment.pic_matrix.shape[0]
         score_dict = self.score_dict
@@ -258,7 +308,6 @@ class Segment:
                                             join_number]
 
     # make sure this works as intended
-
     def checkforcompatibility(self, booleanarray):
         whattokeep = nonzero(booleanarray)
         smallestx1 = min(nonzero(booleanarray)[1])
@@ -278,7 +327,7 @@ class Segment:
             return False
         return True
 
-    #TODO what about a combination of both kruskal and prims like divide into quatars prims?
+    # TODO what about a combination of both kruskal and prims like divide into quatars prims?
     def calculateConnectionsPrim(self, compare_segment):
         best_connection_found_so_far = self.best_connection_found_so_far
         shape = self.binary_connection_matrix.shape
@@ -499,7 +548,12 @@ def setUpArguments():
     return parser.parse_args()
 
 
-def breakUpImage(image, length, save_segments, colortype):
+def get_gist(filename):
+    data = open(filename, 'r').read()
+    return [float(x) for x in data.split()]
+
+
+def breakUpImage(image, length, save_segments, colortype, score_algorithum):
     dimensions = image.shape
     if dimensions[0] != dimensions[1]:
         print("Only square images will work for now to keep things simple")
@@ -515,18 +569,23 @@ def breakUpImage(image, length, save_segments, colortype):
     num_of_pieces_height = int(dimensions[1]/length)
     append = segments.append
     score_dict = {}
-    mal_dict = {}
     for x in range(num_of_pieces_width):
         for y in range(num_of_pieces_height):
             save = image[picX: picX+length, picY: picY+length, :]
-            append(Segment(save, num_of_pieces_width,
-                           num_of_pieces_height, piece_num, piece_num, score_dict, mal_dict))
-            piece_num += 1
+            gist = None
             if save_segments:
                 if colortype == ColorType.RGB:
                     imsave(str(x)+"_"+str(y)+".png", save)
                 if colortype == ColorType.LAB:
                     imsave(str(x)+"_"+str(y)+".png", color.lab2rgb(save))
+                if score_algorithum == ScoreAlgorithum.GIST_AND_EUCLDEAN:
+                    subprocess.run(["gist.exe", "-i", "C:\\Users\\wjones\\Desktop\\puzzle_solver\\Puzzle_Solver_Greedy\\Python3\\"+str(
+                        x)+"_"+str(y)+".png", "-o", "C:\\Users\\wjones\\Desktop\\puzzle_solver\\Puzzle_Solver_Greedy\\Python3"])
+                    gist = get_gist("gist.txt")
+            segment_to_append = Segment(save, num_of_pieces_width,
+                                        num_of_pieces_height, piece_num, piece_num, score_dict, gist)
+            append(segment_to_append)
+            piece_num += 1
             picY += length
         picX += length
         picY = 0
@@ -535,13 +594,14 @@ def breakUpImage(image, length, save_segments, colortype):
 
 def calculateScores(segment_list, score_algorithum):
     for index, segment1 in enumerate(segment_list):
-        print("caculating score for segment ", segment1.piece_number)
+        print("calcuating score for segment ", segment1.piece_number)
         for segment2 in segment_list[index+1:]:
             if score_algorithum == ScoreAlgorithum.EUCLIDEAN:
                 segment1.calculateScoreEuclidean(segment2)
             if score_algorithum == ScoreAlgorithum.MAHALANOBIS:
                 segment1.calculateScoreMahalonbis(segment2)
- 
+            if score_algorithum == ScoreAlgorithum.GIST_AND_EUCLDEAN:
+                segment1.calculateScoreGIST(segment2)
 
 
 def findBestConnectionKruskal(segment_list, compare_type):
@@ -601,46 +661,43 @@ def saveImage(best_connection, piece_size, round, colortype):
     imageName = "round"+str(round)+".png"
     imsave(imageName, new_image)
     return imageName
-
+def normalizeScores(segment_list,scoreType):
+    if scoreType==ScoreAlgorithum.GIST_AND_EUCLDEAN:
+        score_dict=segment_list[0].score_dict
+        #for values in score_dict:
+        max1=max(score_dict.values()[0])
+        max2=max(score_dict.values[1])
+        min1=min(score_dict.values[0])
+        min2=min(score_dict.values[1])
+        for value in score_dict:
+            colorScore=score_dict[value][0]
+            distScore=score_dict[value][1]
+            colorScoreNormal=colorScore-min1/(max1-min1)
+            colorScoreGIST=distScore-min2/(max2-min2)*2#extra weight to GIST
+            score_dict[value]=colorScoreNormal+colorScoreGIST
 
 # TODO  Multiple edge layers.  Maybe corner pixels have some extra say?
-
-class color_image_t: 
-    width=-1
-    height=-1
-    c1=-1		# R 
-    c2=-1		# G
-    c3=-1		# B        
-    def __init__(width, height):
-        self.width=width
-        self.height=height
-          
-
-
-
-
-
 def main():
-    im = Image.open('William.png')
-    return
     start_time = time.time()  # set up variables
     # parser = setUpArguments()
     picture_file_name = "william.png"  # parser.inputpic
-    length = 240  # parser.length
+    length = 480  # parser.length
     save_segments = True  # parser.savepieces
     image = imread(picture_file_name)  # parser.inputpic
     save_assembly_to_disk = True  # parser.saveassembly:
     show_building_animation = True  # parser.showanimation
     colorType = ColorType.RGB
     assemblyType = AssemblyType.KRUSKAL
-    scoreType = ScoreAlgorithum.EUCLIDEAN
+    scoreType = ScoreAlgorithum.GIST_AND_EUCLDEAN
     compareType = CompareWithOtherSegments.ONLY_BEST
     show_print_statements = True
 
     if colorType == ColorType.LAB:
         image = color.rgb2lab(image)
-    segment_list = breakUpImage(image, length, save_segments, colorType)
+    segment_list = breakUpImage(
+        image, length, save_segments, colorType, scoreType)
     calculateScores(segment_list, scoreType)
+    normalizeScores(segment_list,scoreType)
     elapsed_time_secs = time.time() - start_time
     if show_print_statements:
         print("Calculate scores took: %s secs " % elapsed_time_secs)
