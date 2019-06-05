@@ -74,7 +74,7 @@ class BestConnection:
             return self.score < otherConnection.score
         # not this but something to use this ratio with the score
         elif compare_type == CompareWithOtherSegments.COMPARE_WITH_SECOND:
-            return (self.score*(1/(self.score/self.second_best_score))) < (otherConnection.score*(1/(otherConnection.score/otherConnection.second_best_score)))
+            return (2*(self.score*((self.score/self.second_best_score))))+self.score < otherConnection.score+(2*(otherConnection.score*((otherConnection.score/otherConnection.second_best_score))))
 
     def setNodeContents(self, my_list):
         my_list.remove(self.own_segment)
@@ -126,14 +126,14 @@ class Segment:
     def euclideanDistance(self, a, b):
         a = a[0].astype(np.float64)  # underflows would occur without this
         b = b[0].astype(np.float64)
-        temp = sum(np.linalg.norm(x - y) for x, y in zip(a, b))
-        return temp
+        temp = [np.linalg.norm(x - y) for x, y in zip(a, b)]
+        return sum(temp)
 
     def gistDistance(self, a, b, segment):
         colorScore = self.euclideanDistance(a, b)
         gistScore = self.euclideanDistance(
             np.asarray([self.gist]), np.asarray([segment.gist]))
-        return (colorScore,gistScore)  # NORMALIZE THIS
+        return (colorScore, gistScore)
 
     def mahalanobisDistance(self, a, a2, z, z2):
         a = a[0].astype(np.int16)  # underflows would occur without this
@@ -175,9 +175,8 @@ class Segment:
 # https://jamesmccaffrey.wordpress.com/2017/11/09/example-of-calculating-the-mahalanobis-distance/
 # https://www.python.org/dev/peps/pep-0371/ use this to make it faster
 # https://www.sciencedirect.com/science/article/pii/S131915781830394X gist combo with euclidean
-
+# https://pdfs.semanticscholar.org/4003/7d131e3365feb9d69912b3c8e8527e9ed2d5.pdf  cycle detection
 # Filter the image?  Gausian blur etc?
-
 
     def calculateScoreMahalonbis(self, segment):
         size = segment.pic_matrix.shape[0]
@@ -456,7 +455,7 @@ class Segment:
         return best_connection_found_so_far
 
     # rename these bad varaible names
-    def calculateConnectionsKruskal(self, compare_segment):
+    def calculateConnectionsKruskal(self, compare_segment, boost_priority_of_big_pieces_joining):
         if (self.myownNumber, compare_segment.myownNumber) in self.connections_dict:
             return self.connections_dict[(self.myownNumber, compare_segment.myownNumber)]
         score_dict = self.score_dict
@@ -521,7 +520,10 @@ class Segment:
                             numofcompar += 1
                             score += score_dict[node1.piece_number,
                                                 JoinDirection.UP, node2.piece_number]
-                    score = score/numofcompar
+                    if boost_priority_of_big_pieces_joining:
+                        score = score/(numofcompar*numofcompar)
+                    else:
+                        score = score/numofcompar
                     if score < best_connection_found_so_far.score:
                         best_connection_found_so_far.setThings(
                             padded1_pointer, compare_segment, score, self, combined_pieces)
@@ -604,12 +606,13 @@ def calculateScores(segment_list, score_algorithum):
                 segment1.calculateScoreGIST(segment2)
 
 
-def findBestConnectionKruskal(segment_list, compare_type):
+def findBestConnectionKruskal(segment_list, compare_type, boost_priority_of_big_pieces_joining):
     best_so_far = BestConnection()
     for index, segment1 in enumerate(segment_list):
         for segment2 in segment_list[index+1:]:
             segment1.best_connection_found_so_far = BestConnection()
-            temp = segment1.calculateConnectionsKruskal(segment2)
+            temp = segment1.calculateConnectionsKruskal(
+                segment2, boost_priority_of_big_pieces_joining)
             if temp.isBetterConnection(best_so_far, compare_type):
                 best_so_far = temp
     return best_so_far
@@ -650,6 +653,7 @@ def saveImage(best_connection, piece_size, round, colortype):
     sizey = (max(pic_locations[1])-min(pic_locations[1]))+1
     biggest_dim = sizex if sizex > sizey else sizey
     new_image = zeros((biggest_dim*piece_size, biggest_dim*piece_size, 3))
+    print(new_image.shape)
     for x in range(len(pic_locations[0])):
         piece_to_assemble = best_connection.pic_connection_matix[pic_locations[0]
                                                                  [x], pic_locations[1][x]].pic_matrix
@@ -661,43 +665,53 @@ def saveImage(best_connection, piece_size, round, colortype):
     imageName = "round"+str(round)+".png"
     imsave(imageName, new_image)
     return imageName
-def normalizeScores(segment_list,scoreType):
-    if scoreType==ScoreAlgorithum.GIST_AND_EUCLDEAN:
-        score_dict=segment_list[0].score_dict
-        #for values in score_dict:
-        max1=max(score_dict.values()[0])
-        max2=max(score_dict.values[1])
-        min1=min(score_dict.values[0])
-        min2=min(score_dict.values[1])
+
+
+def normalizeScores(segment_list, scoreType):
+    if scoreType == ScoreAlgorithum.GIST_AND_EUCLDEAN:
+        score_dict = segment_list[0].score_dict
+        list1 = []
+        list2 = []
+        for value in score_dict.values():
+            list1.append(value[0])
+            list2.append(value[1])
+        max1 = max(list1)
+        max2 = max(list2)
+        min1 = min(list1)
+        min2 = min(list2)
         for value in score_dict:
-            colorScore=score_dict[value][0]
-            distScore=score_dict[value][1]
-            colorScoreNormal=colorScore-min1/(max1-min1)
-            colorScoreGIST=distScore-min2/(max2-min2)*2#extra weight to GIST
-            score_dict[value]=colorScoreNormal+colorScoreGIST
+            colorScore = score_dict[value][0]
+            distScore = score_dict[value][1]
+            colorScoreNormal = (colorScore-min1)/(max1-min1)
+            colorScoreGIST = ((distScore-min2) / (max2-min2)
+                              )  # extra weight to GIST
+            score_dict[value] = colorScoreNormal+colorScoreGIST
 
 # TODO  Multiple edge layers.  Maybe corner pixels have some extra say?
+
+
 def main():
     start_time = time.time()  # set up variables
     # parser = setUpArguments()
     picture_file_name = "william.png"  # parser.inputpic
-    length = 480  # parser.length
+    length = 30  # parser.length
     save_segments = True  # parser.savepieces
     image = imread(picture_file_name)  # parser.inputpic
     save_assembly_to_disk = True  # parser.saveassembly:
     show_building_animation = True  # parser.showanimation
-    colorType = ColorType.RGB
-    assemblyType = AssemblyType.KRUSKAL
-    scoreType = ScoreAlgorithum.GIST_AND_EUCLDEAN
-    compareType = CompareWithOtherSegments.ONLY_BEST
     show_print_statements = True
+    boost_priority_of_big_pieces_joining = True
+    colorType = ColorType.LAB
+    assemblyType = AssemblyType.KRUSKAL
+    scoreType = ScoreAlgorithum.EUCLIDEAN
+    compareType = CompareWithOtherSegments.COMPARE_WITH_SECOND
 
     if colorType == ColorType.LAB:
         image = color.rgb2lab(image)
     segment_list = breakUpImage(
         image, length, save_segments, colorType, scoreType)
     calculateScores(segment_list, scoreType)
-    normalizeScores(segment_list,scoreType)
+    normalizeScores(segment_list, scoreType)
     elapsed_time_secs = time.time() - start_time
     if show_print_statements:
         print("Calculate scores took: %s secs " % elapsed_time_secs)
@@ -717,7 +731,7 @@ def main():
         best_connection = None
         if assemblyType == AssemblyType.KRUSKAL:
             best_connection = findBestConnectionKruskal(
-                segment_list, compareType)
+                segment_list, compareType, boost_priority_of_big_pieces_joining)
         if assemblyType == AssemblyType.PRIM:
             best_connection = findBestConnectionPrim(
                 segment_list, root, compareType)
@@ -734,10 +748,11 @@ def main():
             w.image = updated_picture
             w.pack(side="bottom", fill="both", expand="no")
             window.update()
-        round += 1
         if show_print_statements == True:
             print("for round ", round, " i get score of ", best_connection.score, "the ratio for first to second best is ",
                   best_connection.score/best_connection.second_best_score, " it took ", time.time()-start_time)
+        round += 1
+
     if show_print_statements == True:
         elapsed_time_secs = time.time() - start_time
         print("Execution took: %s secs " % elapsed_time_secs)
