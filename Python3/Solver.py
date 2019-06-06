@@ -74,7 +74,7 @@ class BestConnection:
             return self.score < otherConnection.score
         # not this but something to use this ratio with the score
         elif compare_type == CompareWithOtherSegments.COMPARE_WITH_SECOND:
-            return (2*(self.score*((self.score/self.second_best_score))))+self.score < otherConnection.score+(2*(otherConnection.score*((otherConnection.score/otherConnection.second_best_score))))
+            return (3*(self.score*((self.score/self.second_best_score))))+self.score < otherConnection.score+(3*(otherConnection.score*((otherConnection.score/otherConnection.second_best_score))))
 
     def setNodeContents(self, my_list):
         my_list.remove(self.own_segment)
@@ -521,7 +521,7 @@ class Segment:
                             score += score_dict[node1.piece_number,
                                                 JoinDirection.UP, node2.piece_number]
                     if boost_priority_of_big_pieces_joining:
-                        score = score/(numofcompar*numofcompar)
+                        score = score/(numofcompar*(numofcompar*.5))
                     else:
                         score = score/numofcompar
                     if score < best_connection_found_so_far.score:
@@ -647,7 +647,7 @@ def clearDictionaryForRam(my_list, removing):
         connection.connections_dict = {}
 
 
-def saveImage(best_connection, piece_size, round, colortype):
+def saveImage(best_connection, piece_size, round, colortype,name_for_round):
     pic_locations = best_connection.binary_connection_matrix.nonzero()
     sizex = (max(pic_locations[0])-min(pic_locations[0]))+1
     sizey = (max(pic_locations[1])-min(pic_locations[1]))+1
@@ -662,7 +662,7 @@ def saveImage(best_connection, piece_size, round, colortype):
         new_image[x1:x1+piece_size, y1:y1+piece_size, :] = piece_to_assemble
     if colortype == ColorType.LAB:
         new_image = color.lab2rgb(new_image)
-    imageName = "round"+str(round)+".png"
+    imageName = name_for_round+" round"+str(round)+".png"
     imsave(imageName, new_image)
     return imageName
 
@@ -688,7 +688,8 @@ def normalizeScores(segment_list, scoreType):
             score_dict[value] = colorScoreNormal+colorScoreGIST
 
 # TODO  Multiple edge layers.  Maybe corner pixels have some extra say?
-
+# TODO Maybe have it go in lines? Or at least start off with two lines one horizontal one vertical to build off and stop going out of bounds?
+# TODO maybe combo of kruskal and prims? Divide into blocks? LImit the number of trees? Force to use prims after awhile?
 
 def main():
     start_time = time.time()  # set up variables
@@ -703,8 +704,9 @@ def main():
     boost_priority_of_big_pieces_joining = True
     colorType = ColorType.LAB
     assemblyType = AssemblyType.KRUSKAL
-    scoreType = ScoreAlgorithum.EUCLIDEAN
+    scoreType = ScoreAlgorithum.MAHALANOBIS
     compareType = CompareWithOtherSegments.COMPARE_WITH_SECOND
+    name_for_round="LAB_KRUSKAL_MALHALANOBIS_CompareSecond_X_3.0_and_score_numberOfPiecesSquared_X_0.5"
 
     if colorType == ColorType.LAB:
         image = color.rgb2lab(image)
@@ -743,7 +745,7 @@ def main():
         root = best_connection.own_segment
         if save_assembly_to_disk:
             updated_picture = ImageTk.PhotoImage(
-                Image.open(saveImage(best_connection, length, round, colorType)))
+                Image.open(saveImage(best_connection, length, round, colorType,name_for_round)))
             w.configure(image=updated_picture)
             w.image = updated_picture
             w.pack(side="bottom", fill="both", expand="no")
