@@ -68,13 +68,20 @@ class BestConnection:
         self.score = score
         self.own_segment = own_segment
         self.binary_connection_matrix = binary_connection_matrix
+    def clear(self):
+        self.pic_connection_matix=None
+        self.join_segment=None
+        self.score=sys.maxsize
+        self.own_segment=None
+        self.binary_connection_matrix=None
+        self.second_best_score=sys.maxsize    
 
     def isBetterConnection(self, otherConnection, compare_type):
         if compare_type == CompareWithOtherSegments.ONLY_BEST:
             return self.score < otherConnection.score
         # not this but something to use this ratio with the score
         elif compare_type == CompareWithOtherSegments.COMPARE_WITH_SECOND:
-            return (3*(self.score*((self.score/self.second_best_score))))+self.score < otherConnection.score+(3*(otherConnection.score*((otherConnection.score/otherConnection.second_best_score))))
+            return (2*(self.score*((self.score/self.second_best_score))))+self.score < otherConnection.score+(2*(otherConnection.score*((otherConnection.score/otherConnection.second_best_score))))
 
     def setNodeContents(self, my_list):
         my_list.remove(self.own_segment)
@@ -95,6 +102,8 @@ class BestConnection:
             numpyAll(self.binary_connection_matrix[..., :] == 0, axis=0))
         self.binary_connection_matrix = delete(
             self.binary_connection_matrix, idx, axis=1)
+    def __eq__(self, other):
+        return self.score==other.score        
 
 
 # malhnobis and different color spaces to try out.
@@ -113,7 +122,7 @@ class Segment:
     piece_number = -1
     gist = None
 
-    def __init__(self, pic_matrix, max_width, max_height, piece_number, myownNumber, score_dict, gist):
+    def __init__(self, pic_matrix, max_width, max_height, piece_number, myownNumber, score_dict, gist, connections_dict):
         self.pic_matrix = pic_matrix
         self.pic_connection_matix = asarray([[self, 0], [0, 0]])
         self.max_width = max_width
@@ -122,10 +131,11 @@ class Segment:
         self.myownNumber = myownNumber
         self.score_dict = score_dict
         self.gist = gist
+        self.connections_dict = connections_dict
 
     def euclideanDistance(self, a, b):
-        a = a[0].astype(np.float64)  # underflows would occur without this
-        b = b[0].astype(np.float64)
+        a = a[0].astype(np.int16)  # underflows would occur without this
+        b = b[0].astype(np.int16)
         temp = [np.linalg.norm(x - y) for x, y in zip(a, b)]
         return sum(temp)
 
@@ -527,10 +537,9 @@ class Segment:
                     if score < best_connection_found_so_far.score:
                         best_connection_found_so_far.setThings(
                             padded1_pointer, compare_segment, score, self, combined_pieces)
-        self.connections_dict[(
-            self.myownNumber, compare_segment.myownNumber)] = best_connection_found_so_far
+        self.connections_dict[(self.myownNumber, compare_segment.myownNumber)] = best_connection_found_so_far
         return best_connection_found_so_far
-
+    
 
 def setUpArguments():
     parser = argparse.ArgumentParser()
@@ -571,6 +580,7 @@ def breakUpImage(image, length, save_segments, colortype, score_algorithum):
     num_of_pieces_height = int(dimensions[1]/length)
     append = segments.append
     score_dict = {}
+    connections_dict={}
     for x in range(num_of_pieces_width):
         for y in range(num_of_pieces_height):
             save = image[picX: picX+length, picY: picY+length, :]
@@ -578,14 +588,15 @@ def breakUpImage(image, length, save_segments, colortype, score_algorithum):
             if save_segments:
                 if colortype == ColorType.RGB:
                     imsave(str(x)+"_"+str(y)+".png", save)
-                if colortype == ColorType.LAB:
-                    imsave(str(x)+"_"+str(y)+".png", color.lab2rgb(save))
-                if score_algorithum == ScoreAlgorithum.GIST_AND_EUCLDEAN:
+                elif colortype == ColorType.LAB:
+                    imageTemp=color.lab2rgb(save)
+                    imsave(str(x)+"_"+str(y)+".png", imageTemp)
+                elif score_algorithum == ScoreAlgorithum.GIST_AND_EUCLDEAN:
                     subprocess.run(["gist.exe", "-i", "C:\\Users\\wjones\\Desktop\\puzzle_solver\\Puzzle_Solver_Greedy\\Python3\\"+str(
                         x)+"_"+str(y)+".png", "-o", "C:\\Users\\wjones\\Desktop\\puzzle_solver\\Puzzle_Solver_Greedy\\Python3"])
                     gist = get_gist("gist.txt")
             segment_to_append = Segment(save, num_of_pieces_width,
-                                        num_of_pieces_height, piece_num, piece_num, score_dict, gist)
+                                        num_of_pieces_height, piece_num, piece_num, score_dict, gist,connections_dict)
             append(segment_to_append)
             piece_num += 1
             picY += length
@@ -600,29 +611,40 @@ def calculateScores(segment_list, score_algorithum):
         for segment2 in segment_list[index+1:]:
             if score_algorithum == ScoreAlgorithum.EUCLIDEAN:
                 segment1.calculateScoreEuclidean(segment2)
-            if score_algorithum == ScoreAlgorithum.MAHALANOBIS:
+            elif score_algorithum == ScoreAlgorithum.MAHALANOBIS:
                 segment1.calculateScoreMahalonbis(segment2)
-            if score_algorithum == ScoreAlgorithum.GIST_AND_EUCLDEAN:
+            elif score_algorithum == ScoreAlgorithum.GIST_AND_EUCLDEAN:
                 segment1.calculateScoreGIST(segment2)
 
 
-def findBestConnectionKruskal(segment_list, compare_type, boost_priority_of_big_pieces_joining):
+def findBestConnectionKruskal(segment_list, compare_type, boost_priority_of_big_pieces_joining,compareType):
     best_so_far = BestConnection()
-    for index, segment1 in enumerate(segment_list):
-        for segment2 in segment_list[index+1:]:
-            segment1.best_connection_found_so_far = BestConnection()
-            temp = segment1.calculateConnectionsKruskal(
-                segment2, boost_priority_of_big_pieces_joining)
-            if temp.isBetterConnection(best_so_far, compare_type):
-                best_so_far = temp
-    return best_so_far
+    if compareType ==CompareWithOtherSegments.ONLY_BEST:
+        for index, segment1 in enumerate(segment_list):
+            for segment2 in segment_list[index+1:]:
+                segment1.best_connection_found_so_far=BestConnection()
+                temp = segment1.calculateConnectionsKruskal(
+                    segment2, boost_priority_of_big_pieces_joining)
+                if temp.isBetterConnection(best_so_far, compare_type):
+                    best_so_far = temp
+        return best_so_far
+    else:
+        for segment1 in segment_list:
+            for segment2 in segment_list:
+              if segment1!=segment2:
+                segment1.best_connection_found_so_far=BestConnection()
+                temp = segment1.calculateConnectionsKruskal(
+                    segment2, boost_priority_of_big_pieces_joining)
+                if temp.isBetterConnection(best_so_far, compare_type):
+                    best_so_far = temp
+        return best_so_far    
 
 
 def findBestConnectionPrim(segment_list, rootSegment, compare_type):
     best_so_far = BestConnection()
     for segment in segment_list:
         if segment != rootSegment:
-            rootSegment.best_connection_found_so_far = BestConnection()
+            rootSegment.best_connection_found_so_far=BestConnection()
             temp = rootSegment.calculateConnectionsPrim(segment)
             if temp.isBetterConnection(best_so_far, compare_type):
                 best_so_far = temp
@@ -644,16 +666,17 @@ def printPiecesMatrices(segment_list):
 
 def clearDictionaryForRam(my_list, removing):
     for connection in my_list:
-        connection.connections_dict = {}
+        for key in dict(connection.connections_dict):
+            if key[0] == removing or key[1] == removing:
+                del connection.connections_dict[key]
 
 
-def saveImage(best_connection, piece_size, round, colortype,name_for_round):
+def saveImage(best_connection, piece_size, round, colortype, name_for_round):
     pic_locations = best_connection.binary_connection_matrix.nonzero()
     sizex = (max(pic_locations[0])-min(pic_locations[0]))+1
     sizey = (max(pic_locations[1])-min(pic_locations[1]))+1
     biggest_dim = sizex if sizex > sizey else sizey
     new_image = zeros((biggest_dim*piece_size, biggest_dim*piece_size, 3))
-    print(new_image.shape)
     for x in range(len(pic_locations[0])):
         piece_to_assemble = best_connection.pic_connection_matix[pic_locations[0]
                                                                  [x], pic_locations[1][x]].pic_matrix
@@ -687,26 +710,47 @@ def normalizeScores(segment_list, scoreType):
                               )  # extra weight to GIST
             score_dict[value] = colorScoreNormal+colorScoreGIST
 
+
+def createCrossPiece(segment_list):
+    root = findBestRootSegment(segment_list)
+
+def checkFunctionCacsTheSameOnEachPeice(segment_list,boost_priority_of_big_pieces_joining):
+    for segment in segment_list:
+        for segment2 in segment_list:
+          if segment!=segment2:  
+            segment.best_connection_found_so_far=BestConnection()
+            segment2.best_connection_found_so_far=BestConnection()            
+            print(segment.best_connection_found_so_far)
+            temp1=segment.calculateConnectionsKruskal(segment2,boost_priority_of_big_pieces_joining) 
+            temp2=segment2.calculateConnectionsKruskal(segment, boost_priority_of_big_pieces_joining)
+            print(temp1==temp2)  
+            if temp1!=temp2: 
+                dude="djafhjkdfsa"
+
+
 # TODO  Multiple edge layers.  Maybe corner pixels have some extra say?
 # TODO Maybe have it go in lines? Or at least start off with two lines one horizontal one vertical to build off and stop going out of bounds?
 # TODO maybe combo of kruskal and prims? Divide into blocks? LImit the number of trees? Force to use prims after awhile?
 
-def main():
+def main():  # TODO SOMETHING IS MAKING THIS GET DIFFERENT ASSEMBLY RESULTS THIS IS A PROBLEM!
+    import warnings
+    warnings.simplefilter('ignore')   
     start_time = time.time()  # set up variables
     # parser = setUpArguments()
     picture_file_name = "william.png"  # parser.inputpic
-    length = 30  # parser.length
+    length = 480  # parser.length
     save_segments = True  # parser.savepieces
     image = imread(picture_file_name)  # parser.inputpic
     save_assembly_to_disk = True  # parser.saveassembly:
     show_building_animation = True  # parser.showanimation
     show_print_statements = True
     boost_priority_of_big_pieces_joining = True
+    use_cross = False
     colorType = ColorType.LAB
     assemblyType = AssemblyType.KRUSKAL
-    scoreType = ScoreAlgorithum.MAHALANOBIS
+    scoreType = ScoreAlgorithum.EUCLIDEAN
     compareType = CompareWithOtherSegments.COMPARE_WITH_SECOND
-    name_for_round="LAB_KRUSKAL_MALHALANOBIS_CompareSecond_X_3.0_and_score_numberOfPiecesSquared_X_0.5"
+    name_for_round = "BOOSTBIGCOMPAREWITHSECONDKRUSKALEUCLDEAN"
 
     if colorType == ColorType.LAB:
         image = color.rgb2lab(image)
@@ -717,6 +761,7 @@ def main():
     elapsed_time_secs = time.time() - start_time
     if show_print_statements:
         print("Calculate scores took: %s secs " % elapsed_time_secs)
+    return
     window, w = None, None
     if show_building_animation:
         window = tkinter.Tk()
@@ -728,12 +773,13 @@ def main():
     original_size = len(segment_list)
     root = None
     if assemblyType == AssemblyType.PRIM:
-        root = findBestRootSegment(segment_list)
+        root = findBestRootSegment(segment_list) 
     while len(segment_list) > 1:
+        #checkFunctionCacsTheSameOnEachPeice(segment_list, boost_priority_of_big_pieces_joining)
         best_connection = None
         if assemblyType == AssemblyType.KRUSKAL:
             best_connection = findBestConnectionKruskal(
-                segment_list, compareType, boost_priority_of_big_pieces_joining)
+                segment_list, compareType, boost_priority_of_big_pieces_joining,compareType)
         if assemblyType == AssemblyType.PRIM:
             best_connection = findBestConnectionPrim(
                 segment_list, root, compareType)
@@ -742,10 +788,11 @@ def main():
         best_connection.own_segment.pic_connection_matix = best_connection.pic_connection_matix
         best_connection.own_segment.myownNumber += original_size
         segment_list.remove(best_connection.join_segment)
+        # clearDictionaryForRam(segment_list,best_connection.join_segment.myownNumber)
         root = best_connection.own_segment
         if save_assembly_to_disk:
             updated_picture = ImageTk.PhotoImage(
-                Image.open(saveImage(best_connection, length, round, colorType,name_for_round)))
+                Image.open(saveImage(best_connection, length, round, colorType, name_for_round)))
             w.configure(image=updated_picture)
             w.image = updated_picture
             w.pack(side="bottom", fill="both", expand="no")
