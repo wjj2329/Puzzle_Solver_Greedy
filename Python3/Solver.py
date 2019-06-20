@@ -12,11 +12,12 @@ from enum import Enum
 from scipy.ndimage.morphology import binary_dilation
 from PIL import ImageTk, Image
 from skimage import io, color
-from numpy import logical_and, zeros, nonzero, argwhere, delete, asarray
+from numpy import logical_and, zeros, nonzero, argwhere, delete, asarray, empty
 from numpy import sum as numpySum
 from numpy import all as numpyAll
 from numpy.linalg import norm
 import subprocess
+import scipy.signal
 
 
 class JoinDirection(Enum):
@@ -48,11 +49,7 @@ class AssemblyType(Enum):
 
 
 class BestConnection:
-    pic_connection_matix = None
-    join_segment = None
     score = sys.maxsize
-    own_segment = None
-    binary_connection_matrix = None
     second_best_score = sys.maxsize
 
     def __init__(self, own_segment=None, pic_connection_matix=None, join_segment=None, binary_connection_matrix=None):
@@ -68,13 +65,14 @@ class BestConnection:
         self.score = score
         self.own_segment = own_segment
         self.binary_connection_matrix = binary_connection_matrix
+
     def clear(self):
-        self.pic_connection_matix=None
-        self.join_segment=None
-        self.score=sys.maxsize
-        self.own_segment=None
-        self.binary_connection_matrix=None
-        self.second_best_score=sys.maxsize    
+        self.pic_connection_matix = None
+        self.join_segment = None
+        self.score = sys.maxsize
+        self.own_segment = None
+        self.binary_connection_matrix = None
+        self.second_best_score = sys.maxsize
 
     def isBetterConnection(self, otherConnection, compare_type):
         if compare_type == CompareWithOtherSegments.ONLY_BEST:
@@ -102,25 +100,17 @@ class BestConnection:
             numpyAll(self.binary_connection_matrix[..., :] == 0, axis=0))
         self.binary_connection_matrix = delete(
             self.binary_connection_matrix, idx, axis=1)
+
     def __eq__(self, other):
-        return self.score==other.score        
+        return self.score == other.score
 
 
 # malhnobis and different color spaces to try out.
 
 class Segment:
-    myownNumber = 0
-    pic_matrix = None
-    score_dict = {}
-    connections_dict = {}
-    connections_first_time = []
+    dilation_mask = asarray([[0, 1, 0], [1, 1, 1, ], [0, 1, 0]])
     binary_connection_matrix = asarray([[1, 0], [0, 0]])
-    pic_connection_matix = None
-    max_width = 0
-    max_height = 0
     best_connection_found_so_far = BestConnection()
-    piece_number = -1
-    gist = None
 
     def __init__(self, pic_matrix, max_width, max_height, piece_number, myownNumber, score_dict, gist, connections_dict):
         self.pic_matrix = pic_matrix
@@ -133,9 +123,21 @@ class Segment:
         self.gist = gist
         self.connections_dict = connections_dict
 
+    def __add__(self, other):
+        if type(self) is Segment:
+            return self
+        else:
+            return other
+
+    def __radd__(self, other):
+        if type(self) is Segment:
+            return self
+        else:
+            return other
+
     def euclideanDistance(self, a, b):
-        a = a[0].astype(np.int16)  # underflows would occur without this
-        b = b[0].astype(np.int16)
+        a = a.astype(np.int16)  # underflows would occur without this
+        b = b.astype(np.int16)
         temp = [np.linalg.norm(x - y) for x, y in zip(a, b)]
         return sum(temp)
 
@@ -146,10 +148,10 @@ class Segment:
         return (colorScore, gistScore)
 
     def mahalanobisDistance(self, a, a2, z, z2):
-        a = a[0].astype(np.int16)  # underflows would occur without this
-        a2 = a2[0].astype(np.int16)
-        z = z[0].astype(np.int16)
-        z2 = z2[0].astype(np.int16)
+        a = a.astype(np.int16)  # underflows would occur without this
+        a2 = a2.astype(np.int16)
+        z = z.astype(np.int16)
+        z2 = z2.astype(np.int16)
 
         cov = np.linalg.pinv(sp.cov((a).T))
         cov2 = np.linalg.pinv(sp.cov((z).T))
@@ -188,53 +190,55 @@ class Segment:
 # https://pdfs.semanticscholar.org/4003/7d131e3365feb9d69912b3c8e8527e9ed2d5.pdf  cycle detection
 # Filter the image?  Gausian blur etc?
 
+
     def calculateScoreMahalonbis(self, segment):
-        size = segment.pic_matrix.shape[0]
         pic_matrix = self.pic_matrix
-        self_top = pic_matrix[0:1, :, :]
-        self_top2 = pic_matrix[1:2, :, :]
-        self_left = np.rot90(pic_matrix[:, 0:1, :])
-        self_left2 = np.rot90(pic_matrix[:, 1:2, :])
-        self_bottom = pic_matrix[size - 1:size, :, :]
-        self_bottom2 = pic_matrix[size-2:size-1, :, :]
-        self_right = np.rot90(pic_matrix[:, size - 1:size, :])
-        self_right2 = np.rot90(pic_matrix[:, size - 2:size-1, :])
+        mahalanobisDistance = self.mahalanobisDistance
+        score_dict = self.score_dict
+        self_top = pic_matrix[0, :, :]
+        self_top2 = pic_matrix[1, :, :]
+        self_left = pic_matrix[:, 0, :]
+        self_left2 = pic_matrix[:, 1, :]
+        self_bottom = pic_matrix[-1, :, :]
+        self_bottom2 = pic_matrix[-2, :, :]
+        self_right = pic_matrix[:, -1, :]
+        self_right2 = pic_matrix[:, -2, :]
 
         segment_matrix = segment.pic_matrix
-        compare_top = segment_matrix[0:1, :, :]
-        compare_top2 = segment_matrix[1:2, :, :]
-        compare_left = np.rot90(segment_matrix[:, 0:1, :])
-        compare_left2 = np.rot90(segment_matrix[:, 1:2, :])
-        compare_bottom = segment_matrix[size - 1:size, :, :]
-        compare_bottom2 = segment_matrix[size - 2:size-1, :, :]
-        compare_right = np.rot90(segment_matrix[:, size - 1:size, :])
-        compare_right2 = np.rot90(segment_matrix[:, size-2:size-1, :])
+        compare_top = segment_matrix[0, :, :]
+        compare_top2 = segment_matrix[1, :, :]
+        compare_left = segment_matrix[:, 0, :]
+        compare_left2 = segment_matrix[:, 1, :]
+        compare_bottom = segment_matrix[-1, :, :]
+        compare_bottom2 = segment_matrix[-2, :, :]
+        compare_right = segment_matrix[:, -1, :]
+        compare_right2 = segment_matrix[:, -2, :]
 
         own_number = self.piece_number
         join_number = segment.piece_number
-        self.score_dict[own_number, JoinDirection.UP,
-                        join_number] = self.mahalanobisDistance(self_top, self_top2, compare_bottom, compare_bottom2)
-        self.score_dict[own_number, JoinDirection.DOWN,
-                        join_number] = self.mahalanobisDistance(self_bottom, self_bottom2, compare_top, compare_top2)
-        self.score_dict[own_number, JoinDirection.LEFT,
-                        join_number] = self.mahalanobisDistance(self_left, self_left2, compare_right, compare_right2)
-        self.score_dict[own_number, JoinDirection.RIGHT,
-                        join_number] = self.mahalanobisDistance(self_right, self_right2, compare_left, compare_left2)
+        score_dict[own_number, JoinDirection.UP,
+                   join_number] = mahalanobisDistance(self_top, self_top2, compare_bottom, compare_bottom2)
+        score_dict[own_number, JoinDirection.DOWN,
+                   join_number] = mahalanobisDistance(self_bottom, self_bottom2, compare_top, compare_top2)
+        score_dict[own_number, JoinDirection.LEFT,
+                   join_number] = mahalanobisDistance(self_left, self_left2, compare_right, compare_right2)
+        score_dict[own_number, JoinDirection.RIGHT,
+                   join_number] = mahalanobisDistance(self_right, self_right2, compare_left, compare_left2)
 
-        self.score_dict[join_number, JoinDirection.DOWN,
-                        own_number] = self.score_dict[own_number, JoinDirection.UP,
-                                                      join_number]
-        self.score_dict[join_number, JoinDirection.UP,
-                        own_number] = self.score_dict[own_number, JoinDirection.DOWN,
-                                                      join_number]
-        self.score_dict[join_number, JoinDirection.RIGHT,
-                        own_number] = self.score_dict[own_number, JoinDirection.LEFT,
-                                                      join_number]
-        self.score_dict[join_number, JoinDirection.LEFT,
-                        own_number] = self.score_dict[own_number, JoinDirection.RIGHT,
-                                                      join_number]
+        score_dict[join_number, JoinDirection.DOWN,
+                   own_number] = score_dict[own_number, JoinDirection.UP,
+                                            join_number]
+        score_dict[join_number, JoinDirection.UP,
+                   own_number] = score_dict[own_number, JoinDirection.DOWN,
+                                            join_number]
+        score_dict[join_number, JoinDirection.RIGHT,
+                   own_number] = score_dict[own_number, JoinDirection.LEFT,
+                                            join_number]
+        score_dict[join_number, JoinDirection.LEFT,
+                   own_number] = score_dict[own_number, JoinDirection.RIGHT,
+                                            join_number]
 
-    def calculateScoreGIST(self, segment):
+    def calculateScoreGIST(self, segment): #this doesn't work :(
         size = segment.pic_matrix.shape[0]
         score_dict = self.score_dict
         gistDistance = self.gistDistance
@@ -276,21 +280,20 @@ class Segment:
                                             join_number]
 
     def calculateScoreEuclidean(self, segment):
-        size = segment.pic_matrix.shape[0]
         score_dict = self.score_dict
         euclideanDistance = self.euclideanDistance
 
         pic_matrix = self.pic_matrix
-        self_top = pic_matrix[0:1, :, :]
-        self_left = np.rot90(pic_matrix[:, 0:1, :])
-        self_bottom = pic_matrix[size - 1:size, :, :]
-        self_right = np.rot90(pic_matrix[:, size - 1:size, :])
+        self_top = pic_matrix[0, :, :]
+        self_left = pic_matrix[:, 0, :]
+        self_bottom = pic_matrix[-1, :, :]
+        self_right = pic_matrix[:, -1, :]
 
         segment_matrix = segment.pic_matrix
-        compare_top = segment_matrix[0:1, :, :]
-        compare_left = np.rot90(segment_matrix[:, 0:1, :])
-        compare_bottom = segment_matrix[size - 1:size, :, :]
-        compare_right = np.rot90(segment_matrix[:, size - 1:size, :])
+        compare_top = segment_matrix[0, :, :]
+        compare_left = segment_matrix[:, 0, :]
+        compare_bottom = segment_matrix[-1, :, :]
+        compare_right = segment_matrix[:, -1, :]
 
         own_number = self.piece_number
         join_number = segment.piece_number
@@ -317,22 +320,13 @@ class Segment:
                                             join_number]
 
     # make sure this works as intended
-    def checkforcompatibility(self, booleanarray):
-        whattokeep = nonzero(booleanarray)
-        smallestx1 = min(nonzero(booleanarray)[1])
-        smallesty1 = min(nonzero(booleanarray)[0])
-        biggestx1 = max(nonzero(booleanarray)[1])
-        biggesty1 = max(nonzero(booleanarray)[0])
-        biggest = biggestx1-smallestx1+1
-        if(biggesty1 - smallesty1 + 1 > biggest):
-            biggest = biggesty1 - smallesty1 + 1
-        storeing = zeros((biggest, biggest), dtype="object")
-        for y in range(0, len(whattokeep[0])):
-            pair = [whattokeep[0][y], whattokeep[1][y]]
-        storeing[pair[0] - smallesty1][pair[1] -
-                                       smallestx1] = booleanarray[pair[0]][pair[1]]
-        temp = storeing
-        if temp.shape[0] > self.max_height or temp.shape[1] > self.max_width:
+    def checkforcompatibility(self, booleanarray, max_height, max_width):
+        non_zero_values = nonzero(booleanarray)
+        smallestx1 = min(non_zero_values[1])
+        smallesty1 = min(non_zero_values[0])
+        biggestx1 = max(non_zero_values[1])
+        biggesty1 = max(non_zero_values[0])
+        if biggestx1-smallestx1 > max_height or biggesty1-smallesty1 > max_width:
             return False
         return True
 
@@ -375,7 +369,7 @@ class Segment:
                     temp_binary_matrix = copy(self_binary_matrix)
                     temp_pic_matrix[x+1, y] = compare_segment
                     temp_binary_matrix[x+1, y] = 1
-                    if checkforcompatibility(temp_binary_matrix):
+                    if checkforcompatibility(temp_binary_matrix, self.max_height, self.max_width):
                         best_connection_found_so_far.setThings(
                             temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
 
@@ -404,7 +398,7 @@ class Segment:
                     temp_binary_matrix = copy(self_binary_matrix)
                     temp_pic_matrix[x-1, y] = compare_segment
                     temp_binary_matrix[x-1, y] = 1
-                    if checkforcompatibility(temp_binary_matrix):
+                    if checkforcompatibility(temp_binary_matrix, self.max_height, self.max_width):
                         best_connection_found_so_far.setThings(
                             temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
             if self_pic_matrix[x][y+1] == 0:
@@ -433,7 +427,7 @@ class Segment:
                     temp_binary_matrix = copy(self_binary_matrix)
                     temp_pic_matrix[x, y+1] = compare_segment
                     temp_binary_matrix[x, y+1] = 1
-                    if checkforcompatibility(temp_binary_matrix):
+                    if checkforcompatibility(temp_binary_matrix, self.max_height, self.max_width):
                         best_connection_found_so_far.setThings(
                             temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
             if self_pic_matrix[x][y-1] == 0:
@@ -459,87 +453,100 @@ class Segment:
                     temp_binary_matrix = copy(self_binary_matrix)
                     temp_pic_matrix[x, y-1] = compare_segment
                     temp_binary_matrix[x, y-1] = 1
-                    if checkforcompatibility(temp_binary_matrix):
+                    if checkforcompatibility(temp_binary_matrix, self.max_height, self.max_width):
                         best_connection_found_so_far.setThings(
                             temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
         return best_connection_found_so_far
 
-    # rename these bad varaible names
+    def findValuesToCompare(self, a):
+        p_a = np.pad(a, 1, mode='constant', constant_values=1)
+        window = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
+        m = scipy.signal.convolve2d(p_a, window, mode='same')
+        v = np.where((a == 1) & (m[1:-1, 1:-1] < 4))
+        return v
+
     def calculateConnectionsKruskal(self, compare_segment, boost_priority_of_big_pieces_joining):
         if (self.myownNumber, compare_segment.myownNumber) in self.connections_dict:
             return self.connections_dict[(self.myownNumber, compare_segment.myownNumber)]
+        checkforcompatibility = self.checkforcompatibility
         score_dict = self.score_dict
+        # findValuesToCompare=self.findValuesToCompare
         best_connection_found_so_far = self.best_connection_found_so_far
-        h1 = self.binary_connection_matrix.shape[0]
-        w1 = self.binary_connection_matrix.shape[1]
-        h2 = compare_segment.binary_connection_matrix.shape[0]
-        w2 = compare_segment.binary_connection_matrix.shape[1]
-        pad_with_piece1 = zeros((h1+2*h2, w1+2*w2))
-        pad_with_piece1[h2:(h2+h1), w2:(w2+w1)] = self.binary_connection_matrix
-        dilation_mask = asarray([[0, 1, 0], [1, 1, 1, ], [0, 1, 0]])
-        result = binary_dilation(
-            input=pad_with_piece1, structure=dilation_mask)
-        neighboring_connections = result - pad_with_piece1
-        for x in range(h1+2*h2-(h2-1)):
-            for y in range(w1+2*w2-(w2-1)):
-                pad_with_piece2 = zeros(neighboring_connections.shape)
+        own_binary_connection_matrix = self.binary_connection_matrix
+        compare_segment_binary_connection_matrix = compare_segment.binary_connection_matrix
+        own_pic_connection_matrix = self.pic_connection_matix
+        compare_segment_pic_connection_matrix = compare_segment.pic_connection_matix
+        h1 = own_binary_connection_matrix.shape[0]
+        w1 = own_binary_connection_matrix.shape[1]
+        h2 = compare_segment_binary_connection_matrix.shape[0]
+        w2 = compare_segment_binary_connection_matrix.shape[1]
+        height_padded = h1+2*h2
+        width_padded = w1+2*w2
+        height_combined = h2+h1
+        width_combined = w2+w1
+        max_height = self.max_height
+        max_width = self.max_width
+        pad_with_piece1 = zeros((height_padded, width_padded))
+        pad_with_piece1[h2:height_combined, w2:(
+            width_combined)] = own_binary_connection_matrix
+        neighboring_connections = binary_dilation(
+            input=pad_with_piece1, structure=self.dilation_mask) - pad_with_piece1
+        neighboring_connections_shape = neighboring_connections.shape
+        padded1_pointer = zeros(
+            (height_padded, width_padded), dtype="object")
+        padded1_pointer[h2:(height_combined), w2:(
+                        width_combined)] = own_pic_connection_matrix
+        for x in range(height_padded-(h2-1)):
+            for y in range(width_padded-(w2-1)):
+                pad_with_piece2 = zeros(neighboring_connections_shape)
                 pad_with_piece2[x:(x+h2), y:(y+w2)
-                                ] = compare_segment.binary_connection_matrix
-                connect_map = logical_and(
-                    neighboring_connections, pad_with_piece2)
-                overlap_map = logical_and(pad_with_piece1, pad_with_piece2)
-                has_connections = numpySum(connect_map[:]) > 0
-                has_overlap = numpySum(overlap_map[:]) > 0
+                                ] = compare_segment_binary_connection_matrix
+                if not numpySum(logical_and(
+                        neighboring_connections, pad_with_piece2)[:]) > 0:
+                    continue
+                if numpySum(logical_and(
+                        pad_with_piece1, pad_with_piece2)[:]) > 0:
+                    continue
                 combined_pieces = pad_with_piece1+pad_with_piece2
-                if has_connections and not has_overlap and self.checkforcompatibility(combined_pieces):
+                if checkforcompatibility(combined_pieces, max_height, max_width):
                     store = nonzero(pad_with_piece1)
                     score = 0
                     numofcompar = 0
-                    padded1_pointer = zeros(
-                        (h1+2*h2, w1+2*w2), dtype="object")
-                    padded1_pointer[h2:(h2+h1), w2:(w2+w1)
-                                    ] = self.pic_connection_matix
-                    temp_pointer = zeros((h1+2*h2, w1+2*w2), dtype="object")
+                    temp_pointer = zeros(  # just use fill to speed this up?
+                        (height_padded, width_padded), dtype="object")
+
                     temp_pointer[x:(h2+x), y:(w2+y)
-                                 ] = compare_segment.pic_connection_matix
-                    stuff = temp_pointer.nonzero()
-                    for q, w in zip(stuff[0], stuff[1]):
-                        padded1_pointer[q][w] = temp_pointer[q, w]
+                                 ] = compare_segment_pic_connection_matrix
+                    combined_pointer = temp_pointer+padded1_pointer
                     for d, h in zip(store[0], store[1]):
+                        node1 = combined_pointer[d, h].piece_number
                         if pad_with_piece2[d][h+1] == 1:
-                            node1 = padded1_pointer[d, h]
-                            node2 = padded1_pointer[d, h+1]
                             numofcompar += 1
-                            score += score_dict[node1.piece_number,
-                                                JoinDirection.RIGHT, node2.piece_number]
+                            score += score_dict[node1,
+                                                JoinDirection.RIGHT, combined_pointer[d, h+1].piece_number]
                         if pad_with_piece2[d][h-1] == 1:
-                            node1 = padded1_pointer[d, h]
-                            node2 = padded1_pointer[d, h-1]
                             numofcompar += 1
-                            score += score_dict[node1.piece_number,
-                                                JoinDirection.LEFT, node2.piece_number]
+                            score += score_dict[node1,
+                                                JoinDirection.LEFT, combined_pointer[d, h-1].piece_number]
                         if pad_with_piece2[d+1][h] == 1:
-                            node1 = padded1_pointer[d, h]
-                            node2 = padded1_pointer[d+1, h]
                             numofcompar += 1
-                            score += score_dict[node1.piece_number,
-                                                JoinDirection.DOWN, node2.piece_number]
+                            score += score_dict[node1,
+                                                JoinDirection.DOWN, combined_pointer[d+1, h].piece_number]
                         if pad_with_piece2[d-1][h] == 1:
-                            node1 = padded1_pointer[d, h]
-                            node2 = padded1_pointer[d-1, h]
                             numofcompar += 1
-                            score += score_dict[node1.piece_number,
-                                                JoinDirection.UP, node2.piece_number]
+                            score += score_dict[node1,
+                                                JoinDirection.UP, combined_pointer[d-1, h].piece_number]
                     if boost_priority_of_big_pieces_joining:
-                        score = score/(numofcompar*(numofcompar*.5))
+                        score = score/((numofcompar*numofcompar)*0.5)
                     else:
                         score = score/numofcompar
                     if score < best_connection_found_so_far.score:
                         best_connection_found_so_far.setThings(
-                            padded1_pointer, compare_segment, score, self, combined_pieces)
-        self.connections_dict[(self.myownNumber, compare_segment.myownNumber)] = best_connection_found_so_far
+                            combined_pointer, compare_segment, score, self, combined_pieces)
+        self.connections_dict[(
+            self.myownNumber, compare_segment.myownNumber)] = best_connection_found_so_far
         return best_connection_found_so_far
-    
+
 
 def setUpArguments():
     parser = argparse.ArgumentParser()
@@ -580,7 +587,7 @@ def breakUpImage(image, length, save_segments, colortype, score_algorithum):
     num_of_pieces_height = int(dimensions[1]/length)
     append = segments.append
     score_dict = {}
-    connections_dict={}
+    connections_dict = {}
     for x in range(num_of_pieces_width):
         for y in range(num_of_pieces_height):
             save = image[picX: picX+length, picY: picY+length, :]
@@ -589,14 +596,14 @@ def breakUpImage(image, length, save_segments, colortype, score_algorithum):
                 if colortype == ColorType.RGB:
                     imsave(str(x)+"_"+str(y)+".png", save)
                 elif colortype == ColorType.LAB:
-                    imageTemp=color.lab2rgb(save)
+                    imageTemp = color.lab2rgb(save)
                     imsave(str(x)+"_"+str(y)+".png", imageTemp)
                 elif score_algorithum == ScoreAlgorithum.GIST_AND_EUCLDEAN:
                     subprocess.run(["gist.exe", "-i", "C:\\Users\\wjones\\Desktop\\puzzle_solver\\Puzzle_Solver_Greedy\\Python3\\"+str(
                         x)+"_"+str(y)+".png", "-o", "C:\\Users\\wjones\\Desktop\\puzzle_solver\\Puzzle_Solver_Greedy\\Python3"])
                     gist = get_gist("gist.txt")
             segment_to_append = Segment(save, num_of_pieces_width,
-                                        num_of_pieces_height, piece_num, piece_num, score_dict, gist,connections_dict)
+                                        num_of_pieces_height, piece_num, piece_num, score_dict, gist, connections_dict)
             append(segment_to_append)
             piece_num += 1
             picY += length
@@ -617,12 +624,12 @@ def calculateScores(segment_list, score_algorithum):
                 segment1.calculateScoreGIST(segment2)
 
 
-def findBestConnectionKruskal(segment_list, compare_type, boost_priority_of_big_pieces_joining,compareType):
+def findBestConnectionKruskal(segment_list, compare_type, boost_priority_of_big_pieces_joining, compareType):
     best_so_far = BestConnection()
-    if compareType ==CompareWithOtherSegments.ONLY_BEST:
+    if compareType == CompareWithOtherSegments.ONLY_BEST:
         for index, segment1 in enumerate(segment_list):
             for segment2 in segment_list[index+1:]:
-                segment1.best_connection_found_so_far=BestConnection()
+                segment1.best_connection_found_so_far = BestConnection()
                 temp = segment1.calculateConnectionsKruskal(
                     segment2, boost_priority_of_big_pieces_joining)
                 if temp.isBetterConnection(best_so_far, compare_type):
@@ -631,20 +638,20 @@ def findBestConnectionKruskal(segment_list, compare_type, boost_priority_of_big_
     else:
         for segment1 in segment_list:
             for segment2 in segment_list:
-              if segment1!=segment2:
-                segment1.best_connection_found_so_far=BestConnection()
-                temp = segment1.calculateConnectionsKruskal(
-                    segment2, boost_priority_of_big_pieces_joining)
-                if temp.isBetterConnection(best_so_far, compare_type):
-                    best_so_far = temp
-        return best_so_far    
+                if segment1 != segment2:
+                    segment1.best_connection_found_so_far = BestConnection()
+                    temp = segment1.calculateConnectionsKruskal(
+                        segment2, boost_priority_of_big_pieces_joining)
+                    if temp.isBetterConnection(best_so_far, compare_type):
+                        best_so_far = temp
+        return best_so_far
 
 
 def findBestConnectionPrim(segment_list, rootSegment, compare_type):
     best_so_far = BestConnection()
     for segment in segment_list:
         if segment != rootSegment:
-            rootSegment.best_connection_found_so_far=BestConnection()
+            rootSegment.best_connection_found_so_far = BestConnection()
             temp = rootSegment.calculateConnectionsPrim(segment)
             if temp.isBetterConnection(best_so_far, compare_type):
                 best_so_far = temp
@@ -714,18 +721,19 @@ def normalizeScores(segment_list, scoreType):
 def createCrossPiece(segment_list):
     root = findBestRootSegment(segment_list)
 
-def checkFunctionCacsTheSameOnEachPeice(segment_list,boost_priority_of_big_pieces_joining):
+
+def checkFunctionCacsTheSameOnEachPeice(segment_list, boost_priority_of_big_pieces_joining):
     for segment in segment_list:
         for segment2 in segment_list:
-          if segment!=segment2:  
-            segment.best_connection_found_so_far=BestConnection()
-            segment2.best_connection_found_so_far=BestConnection()            
-            print(segment.best_connection_found_so_far)
-            temp1=segment.calculateConnectionsKruskal(segment2,boost_priority_of_big_pieces_joining) 
-            temp2=segment2.calculateConnectionsKruskal(segment, boost_priority_of_big_pieces_joining)
-            print(temp1==temp2)  
-            if temp1!=temp2: 
-                dude="djafhjkdfsa"
+            if segment != segment2:
+                segment.best_connection_found_so_far = BestConnection()
+                segment2.best_connection_found_so_far = BestConnection()
+                print(segment.best_connection_found_so_far)
+                temp1 = segment.calculateConnectionsKruskal(
+                    segment2, boost_priority_of_big_pieces_joining)
+                temp2 = segment2.calculateConnectionsKruskal(
+                    segment, boost_priority_of_big_pieces_joining)
+                print(temp1 == temp2)
 
 
 # TODO  Multiple edge layers.  Maybe corner pixels have some extra say?
@@ -733,24 +741,21 @@ def checkFunctionCacsTheSameOnEachPeice(segment_list,boost_priority_of_big_piece
 # TODO maybe combo of kruskal and prims? Divide into blocks? LImit the number of trees? Force to use prims after awhile?
 
 def main():  # TODO SOMETHING IS MAKING THIS GET DIFFERENT ASSEMBLY RESULTS THIS IS A PROBLEM!
-    import warnings
-    warnings.simplefilter('ignore')   
-    start_time = time.time()  # set up variables
-    # parser = setUpArguments()
-    picture_file_name = "william.png"  # parser.inputpic
-    length = 480  # parser.length
-    save_segments = True  # parser.savepieces
-    image = imread(picture_file_name)  # parser.inputpic
-    save_assembly_to_disk = True  # parser.saveassembly:
-    show_building_animation = True  # parser.showanimation
+    start_time = time.time()
+    picture_file_name = "william.png"
+    length = 30
+    save_segments = True
+    image = imread(picture_file_name)
+    save_assembly_to_disk = True
+    show_building_animation = True
     show_print_statements = True
-    boost_priority_of_big_pieces_joining = True
+    boost_priority_of_big_pieces_joining = False
     use_cross = False
     colorType = ColorType.LAB
     assemblyType = AssemblyType.KRUSKAL
-    scoreType = ScoreAlgorithum.EUCLIDEAN
-    compareType = CompareWithOtherSegments.COMPARE_WITH_SECOND
-    name_for_round = "BOOSTBIGCOMPAREWITHSECONDKRUSKALEUCLDEAN"
+    scoreType = ScoreAlgorithum.MAHALANOBIS
+    compareType = CompareWithOtherSegments.ONLY_BEST
+    name_for_round = "test"
 
     if colorType == ColorType.LAB:
         image = color.rgb2lab(image)
@@ -761,7 +766,6 @@ def main():  # TODO SOMETHING IS MAKING THIS GET DIFFERENT ASSEMBLY RESULTS THIS
     elapsed_time_secs = time.time() - start_time
     if show_print_statements:
         print("Calculate scores took: %s secs " % elapsed_time_secs)
-    return
     window, w = None, None
     if show_building_animation:
         window = tkinter.Tk()
@@ -773,13 +777,12 @@ def main():  # TODO SOMETHING IS MAKING THIS GET DIFFERENT ASSEMBLY RESULTS THIS
     original_size = len(segment_list)
     root = None
     if assemblyType == AssemblyType.PRIM:
-        root = findBestRootSegment(segment_list) 
+        root = findBestRootSegment(segment_list)
     while len(segment_list) > 1:
-        #checkFunctionCacsTheSameOnEachPeice(segment_list, boost_priority_of_big_pieces_joining)
         best_connection = None
         if assemblyType == AssemblyType.KRUSKAL:
             best_connection = findBestConnectionKruskal(
-                segment_list, compareType, boost_priority_of_big_pieces_joining,compareType)
+                segment_list, compareType, boost_priority_of_big_pieces_joining, compareType)
         if assemblyType == AssemblyType.PRIM:
             best_connection = findBestConnectionPrim(
                 segment_list, root, compareType)
@@ -788,7 +791,6 @@ def main():  # TODO SOMETHING IS MAKING THIS GET DIFFERENT ASSEMBLY RESULTS THIS
         best_connection.own_segment.pic_connection_matix = best_connection.pic_connection_matix
         best_connection.own_segment.myownNumber += original_size
         segment_list.remove(best_connection.join_segment)
-        # clearDictionaryForRam(segment_list,best_connection.join_segment.myownNumber)
         root = best_connection.own_segment
         if save_assembly_to_disk:
             updated_picture = ImageTk.PhotoImage(
