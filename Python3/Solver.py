@@ -36,6 +36,7 @@ class ScoreAlgorithum(Enum):
     EUCLIDEAN = 1
     MAHALANOBIS = 2
     GIST_AND_EUCLDEAN = 3
+    EUCLIDEAN_AND_MAHALANOBIS = 4
 
 
 class ColorType(Enum):
@@ -66,26 +67,11 @@ class BestConnection:
         self.own_segment = own_segment
         self.binary_connection_matrix = binary_connection_matrix
 
-    def clear(self):
-        self.pic_connection_matix = None
-        self.join_segment = None
-        self.score = sys.maxsize
-        self.own_segment = None
-        self.binary_connection_matrix = None
-        self.second_best_score = sys.maxsize
-
     def isBetterConnection(self, otherConnection, compare_type):
         if compare_type == CompareWithOtherSegments.ONLY_BEST:
             return self.score < otherConnection.score
-        # not this but something to use this ratio with the score
         elif compare_type == CompareWithOtherSegments.COMPARE_WITH_SECOND:
             return (2*(self.score*((self.score/self.second_best_score))))+self.score < otherConnection.score+(2*(otherConnection.score*((otherConnection.score/otherConnection.second_best_score))))
-
-    def setNodeContents(self, my_list):
-        my_list.remove(self.own_segment)
-        self.own_segment.pic_connection_matix = self.pic_connection_matix
-        self.own_segment.binary_connection_matrix = self.binary_connection_matrix
-        my_list.append(self.own_segment)
 
     def stripZeros(self):
         self.pic_connection_matix = self.pic_connection_matix[~numpyAll(
@@ -104,8 +90,6 @@ class BestConnection:
     def __eq__(self, other):
         return self.score == other.score
 
-
-# malhnobis and different color spaces to try out.
 
 class Segment:
     dilation_mask = asarray([[0, 1, 0], [1, 1, 1, ], [0, 1, 0]])
@@ -136,9 +120,7 @@ class Segment:
             return other
 
     def euclideanDistance(self, a, b):
-        a = a.astype(np.int16)  # underflows would occur without this
-        b = b.astype(np.int16)
-        temp = [np.linalg.norm(x - y) for x, y in zip(a, b)]
+        temp = [norm(x - y) for x, y in zip(a, b)]
         return sum(temp)
 
     def gistDistance(self, a, b, segment):
@@ -148,11 +130,6 @@ class Segment:
         return (colorScore, gistScore)
 
     def mahalanobisDistance(self, a, a2, z, z2):
-        a = a.astype(np.int16)  # underflows would occur without this
-        a2 = a2.astype(np.int16)
-        z = z.astype(np.int16)
-        z2 = z2.astype(np.int16)
-
         cov = np.linalg.pinv(sp.cov((a).T))
         cov2 = np.linalg.pinv(sp.cov((z).T))
 
@@ -182,17 +159,8 @@ class Segment:
             score += math.sqrt(abs(mymatrix2*cov*mymatrix2.T))
         return score
 
-
-# http://chenlab.ece.cornell.edu/people/Andy/publications/Andy_files/Gallagher_cvpr2012_puzzleAssembly.pdf
-# https://jamesmccaffrey.wordpress.com/2017/11/09/example-of-calculating-the-mahalanobis-distance/
-# https://www.python.org/dev/peps/pep-0371/ use this to make it faster
-# https://www.sciencedirect.com/science/article/pii/S131915781830394X gist combo with euclidean
-# https://pdfs.semanticscholar.org/4003/7d131e3365feb9d69912b3c8e8527e9ed2d5.pdf  cycle detection
-# Filter the image?  Gausian blur etc?
-
-
     def calculateScoreMahalonbis(self, segment):
-        pic_matrix = self.pic_matrix
+        pic_matrix = self.pic_matrix.astype(np.int16)
         mahalanobisDistance = self.mahalanobisDistance
         score_dict = self.score_dict
         self_top = pic_matrix[0, :, :]
@@ -238,7 +206,7 @@ class Segment:
                    own_number] = score_dict[own_number, JoinDirection.RIGHT,
                                             join_number]
 
-    def calculateScoreGIST(self, segment): #this doesn't work :(
+    def calculateScoreGIST(self, segment):  # this doesn't work :(
         size = segment.pic_matrix.shape[0]
         score_dict = self.score_dict
         gistDistance = self.gistDistance
@@ -283,7 +251,7 @@ class Segment:
         score_dict = self.score_dict
         euclideanDistance = self.euclideanDistance
 
-        pic_matrix = self.pic_matrix
+        pic_matrix = self.pic_matrix.astype(np.int16)
         self_top = pic_matrix[0, :, :]
         self_left = pic_matrix[:, 0, :]
         self_bottom = pic_matrix[-1, :, :]
@@ -319,7 +287,54 @@ class Segment:
                    own_number] = score_dict[own_number, JoinDirection.RIGHT,
                                             join_number]
 
-    # make sure this works as intended
+    def calculateScoreEuclideanAndMahalonbis(self, segment):
+        pic_matrix = self.pic_matrix.astype(np.int16)
+        mahalanobisDistance = self.mahalanobisDistance
+        euclideanDistance = self.euclideanDistance
+        score_dict = self.score_dict
+        self_top = pic_matrix[0, :, :]
+        self_top2 = pic_matrix[1, :, :]
+        self_left = pic_matrix[:, 0, :]
+        self_left2 = pic_matrix[:, 1, :]
+        self_bottom = pic_matrix[-1, :, :]
+        self_bottom2 = pic_matrix[-2, :, :]
+        self_right = pic_matrix[:, -1, :]
+        self_right2 = pic_matrix[:, -2, :]
+
+        segment_matrix = segment.pic_matrix
+        compare_top = segment_matrix[0, :, :]
+        compare_top2 = segment_matrix[1, :, :]
+        compare_left = segment_matrix[:, 0, :]
+        compare_left2 = segment_matrix[:, 1, :]
+        compare_bottom = segment_matrix[-1, :, :]
+        compare_bottom2 = segment_matrix[-2, :, :]
+        compare_right = segment_matrix[:, -1, :]
+        compare_right2 = segment_matrix[:, -2, :]
+
+        own_number = self.piece_number
+        join_number = segment.piece_number
+        score_dict[own_number, JoinDirection.UP,
+                   join_number] = (mahalanobisDistance(self_top, self_top2, compare_bottom, compare_bottom2), euclideanDistance(self_top, compare_bottom))
+        score_dict[own_number, JoinDirection.DOWN,
+                   join_number] = (mahalanobisDistance(self_bottom, self_bottom2, compare_top, compare_top2), euclideanDistance(self_bottom, compare_top))
+        score_dict[own_number, JoinDirection.LEFT,
+                   join_number] = (mahalanobisDistance(self_left, self_left2, compare_right, compare_right2), euclideanDistance(self_left, compare_right))
+        score_dict[own_number, JoinDirection.RIGHT,
+                   join_number] = (mahalanobisDistance(self_right, self_right2, compare_left, compare_left2), euclideanDistance(self_right, compare_left))
+
+        score_dict[join_number, JoinDirection.DOWN,
+                   own_number] = score_dict[own_number, JoinDirection.UP,
+                                            join_number]
+        score_dict[join_number, JoinDirection.UP,
+                   own_number] = score_dict[own_number, JoinDirection.DOWN,
+                                            join_number]
+        score_dict[join_number, JoinDirection.RIGHT,
+                   own_number] = score_dict[own_number, JoinDirection.LEFT,
+                                            join_number]
+        score_dict[join_number, JoinDirection.LEFT,
+                   own_number] = score_dict[own_number, JoinDirection.RIGHT,
+                                            join_number]
+
     def checkforcompatibility(self, booleanarray, max_height, max_width):
         non_zero_values = nonzero(booleanarray)
         smallestx1 = min(non_zero_values[1])
@@ -330,7 +345,6 @@ class Segment:
             return False
         return True
 
-    # TODO what about a combination of both kruskal and prims like divide into quatars prims?
     def calculateConnectionsPrim(self, compare_segment):
         best_connection_found_so_far = self.best_connection_found_so_far
         shape = self.binary_connection_matrix.shape
@@ -458,6 +472,7 @@ class Segment:
                             temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
         return best_connection_found_so_far
 
+    # sadly this is slower than just brute forcing the entire thing
     def findValuesToCompare(self, a):
         p_a = np.pad(a, 1, mode='constant', constant_values=1)
         window = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
@@ -470,7 +485,6 @@ class Segment:
             return self.connections_dict[(self.myownNumber, compare_segment.myownNumber)]
         checkforcompatibility = self.checkforcompatibility
         score_dict = self.score_dict
-        # findValuesToCompare=self.findValuesToCompare
         best_connection_found_so_far = self.best_connection_found_so_far
         own_binary_connection_matrix = self.binary_connection_matrix
         compare_segment_binary_connection_matrix = compare_segment.binary_connection_matrix
@@ -498,6 +512,7 @@ class Segment:
                         width_combined)] = own_pic_connection_matrix
         for x in range(height_padded-(h2-1)):
             for y in range(width_padded-(w2-1)):
+                # brute force is faster apparently
                 pad_with_piece2 = zeros(neighboring_connections_shape)
                 pad_with_piece2[x:(x+h2), y:(y+w2)
                                 ] = compare_segment_binary_connection_matrix
@@ -622,6 +637,8 @@ def calculateScores(segment_list, score_algorithum):
                 segment1.calculateScoreMahalonbis(segment2)
             elif score_algorithum == ScoreAlgorithum.GIST_AND_EUCLDEAN:
                 segment1.calculateScoreGIST(segment2)
+            elif score_algorithum == ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS:
+                segment1.calculateScoreEuclideanAndMahalonbis(segment2)
 
 
 def findBestConnectionKruskal(segment_list, compare_type, boost_priority_of_big_pieces_joining, compareType):
@@ -680,15 +697,19 @@ def clearDictionaryForRam(my_list, removing):
 
 def saveImage(best_connection, piece_size, round, colortype, name_for_round):
     pic_locations = best_connection.binary_connection_matrix.nonzero()
-    sizex = (max(pic_locations[0])-min(pic_locations[0]))+1
-    sizey = (max(pic_locations[1])-min(pic_locations[1]))+1
+    biggestx = max(pic_locations[0])
+    biggesty = max(pic_locations[1])
+    smallestx = min(pic_locations[0])
+    smallesty = min(pic_locations[1])
+    sizex = (biggestx-smallestx)+1
+    sizey = (biggesty-smallesty)+1
     biggest_dim = sizex if sizex > sizey else sizey
     new_image = zeros((biggest_dim*piece_size, biggest_dim*piece_size, 3))
     for x in range(len(pic_locations[0])):
         piece_to_assemble = best_connection.pic_connection_matix[pic_locations[0]
                                                                  [x], pic_locations[1][x]].pic_matrix
-        x1 = (pic_locations[0][x]-min(pic_locations[0]))*piece_size
-        y1 = (pic_locations[1][x]-min(pic_locations[1]))*piece_size
+        x1 = (pic_locations[0][x]-smallestx)*piece_size
+        y1 = (pic_locations[1][x]-smallesty)*piece_size
         new_image[x1:x1+piece_size, y1:y1+piece_size, :] = piece_to_assemble
     if colortype == ColorType.LAB:
         new_image = color.lab2rgb(new_image)
@@ -716,6 +737,24 @@ def normalizeScores(segment_list, scoreType):
             colorScoreGIST = ((distScore-min2) / (max2-min2)
                               )  # extra weight to GIST
             score_dict[value] = colorScoreNormal+colorScoreGIST
+    elif scoreType == ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS:
+        score_dict = segment_list[0].score_dict
+        list1 = []
+        list2 = []
+        for value in score_dict.values():
+            list1.append(value[0])
+            list2.append(value[1])
+        max1 = max(list1)
+        max2 = max(list2)
+        min1 = min(list1)
+        min2 = min(list2)
+        for value in score_dict:
+            colorScore = score_dict[value][0]
+            distScore = score_dict[value][1]
+            colorScoreMal = (colorScore-min1)/(max1-min1)
+            colorScoreEucl = ((distScore-min2) / (max2-min2)
+                              )  # extra weight to GIST
+            score_dict[value] = colorScoreMal+colorScoreEucl            
 
 
 def createCrossPiece(segment_list):
@@ -736,11 +775,52 @@ def checkFunctionCacsTheSameOnEachPeice(segment_list, boost_priority_of_big_piec
                 print(temp1 == temp2)
 
 
+def connectBestBudsFirst(segment_list, original_size):
+    for segment1 in segment_list:
+        best_so_far = BestConnection()
+        for segment2 in segment_list:
+            if segment1 != segment2:
+                segment1.best_connection_found_so_far = BestConnection()
+                temp = segment1.calculateConnectionsKruskal(segment2, False)
+                if temp.isBetterConnection(best_so_far, CompareWithOtherSegments.ONLY_BEST):
+                    best_so_far = temp
+        best_so_far2 = BestConnection()
+        for segment2 in segment_list:
+            if segment2 != best_so_far.join_segment:
+                best_so_far.join_segment.best_connection_found_so_far = BestConnection()
+                temp = best_so_far.join_segment.calculateConnectionsKruskal(
+                    segment2, False)
+                if temp.isBetterConnection(best_so_far2, CompareWithOtherSegments.ONLY_BEST):
+                    best_so_far2 = temp
+        print(best_so_far.own_segment.piece_number, " ", best_so_far.join_segment.piece_number,
+              " ", best_so_far2.own_segment.piece_number, " ", best_so_far2.join_segment.piece_number)
+        if best_so_far.own_segment.piece_number == best_so_far2.join_segment.piece_number and best_so_far.join_segment.piece_number == best_so_far2.own_segment.piece_number:
+            joinPieces(best_so_far2, segment_list, original_size)
+
+
+def joinPieces(best_connection, segment_list, original_size):
+    best_connection.stripZeros()
+    best_connection.own_segment.binary_connection_matrix = best_connection.binary_connection_matrix
+    best_connection.own_segment.pic_connection_matix = best_connection.pic_connection_matix
+    best_connection.own_segment.myownNumber += original_size
+    segment_list.remove(best_connection.join_segment)
+
+
 # TODO  Multiple edge layers.  Maybe corner pixels have some extra say?
 # TODO Maybe have it go in lines? Or at least start off with two lines one horizontal one vertical to build off and stop going out of bounds?
 # TODO maybe combo of kruskal and prims? Divide into blocks? LImit the number of trees? Force to use prims after awhile?
-
-def main():  # TODO SOMETHING IS MAKING THIS GET DIFFERENT ASSEMBLY RESULTS THIS IS A PROBLEM!
+# TODO do a best budy where each peice thinks the other is the best and get those done FIRST
+# TODO Different color spaces
+# TODO Find balance of second best ratio
+# TODO is mal distance the same either way???? Did I get that wrong?
+# TODO combo of Euclidean and MAL?
+# http://chenlab.ece.cornell.edu/people/Andy/publications/Andy_files/Gallagher_cvpr2012_puzzleAssembly.pdf
+# https://jamesmccaffrey.wordpress.com/2017/11/09/example-of-calculating-the-mahalanobis-distance/
+# https://www.python.org/dev/peps/pep-0371/ use this to make it faster
+# https://www.sciencedirect.com/science/article/pii/S131915781830394X gist combo with euclidean
+# https://pdfs.semanticscholar.org/4003/7d131e3365feb9d69912b3c8e8527e9ed2d5.pdf  cycle detection
+# Filter the image?  Gausian blur etc?
+def main():
     start_time = time.time()
     picture_file_name = "william.png"
     length = 30
@@ -751,9 +831,11 @@ def main():  # TODO SOMETHING IS MAKING THIS GET DIFFERENT ASSEMBLY RESULTS THIS
     show_print_statements = True
     boost_priority_of_big_pieces_joining = False
     use_cross = False
+    connect_best_friends_first = True
+
     colorType = ColorType.LAB
     assemblyType = AssemblyType.KRUSKAL
-    scoreType = ScoreAlgorithum.MAHALANOBIS
+    scoreType = ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS
     compareType = CompareWithOtherSegments.ONLY_BEST
     name_for_round = "test"
 
@@ -762,6 +844,7 @@ def main():  # TODO SOMETHING IS MAKING THIS GET DIFFERENT ASSEMBLY RESULTS THIS
     segment_list = breakUpImage(
         image, length, save_segments, colorType, scoreType)
     calculateScores(segment_list, scoreType)
+
     normalizeScores(segment_list, scoreType)
     elapsed_time_secs = time.time() - start_time
     if show_print_statements:
@@ -776,6 +859,8 @@ def main():  # TODO SOMETHING IS MAKING THIS GET DIFFERENT ASSEMBLY RESULTS THIS
     round = 0
     original_size = len(segment_list)
     root = None
+    if connect_best_friends_first:
+        connectBestBudsFirst(segment_list, original_size)
     if assemblyType == AssemblyType.PRIM:
         root = findBestRootSegment(segment_list)
     while len(segment_list) > 1:
@@ -786,11 +871,7 @@ def main():  # TODO SOMETHING IS MAKING THIS GET DIFFERENT ASSEMBLY RESULTS THIS
         if assemblyType == AssemblyType.PRIM:
             best_connection = findBestConnectionPrim(
                 segment_list, root, compareType)
-        best_connection.stripZeros()
-        best_connection.own_segment.binary_connection_matrix = best_connection.binary_connection_matrix
-        best_connection.own_segment.pic_connection_matix = best_connection.pic_connection_matix
-        best_connection.own_segment.myownNumber += original_size
-        segment_list.remove(best_connection.join_segment)
+        joinPieces(best_connection, segment_list, original_size)
         root = best_connection.own_segment
         if save_assembly_to_disk:
             updated_picture = ImageTk.PhotoImage(
