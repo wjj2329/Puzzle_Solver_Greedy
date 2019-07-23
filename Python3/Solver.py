@@ -512,7 +512,6 @@ class Segment:
                         width_combined)] = own_pic_connection_matrix
         for x in range(height_padded-(h2-1)):
             for y in range(width_padded-(w2-1)):
-                # brute force is faster apparently
                 pad_with_piece2 = zeros(neighboring_connections_shape)
                 pad_with_piece2[x:(x+h2), y:(y+w2)
                                 ] = compare_segment_binary_connection_matrix
@@ -527,7 +526,7 @@ class Segment:
                     store = nonzero(pad_with_piece1)
                     score = 0
                     numofcompar = 0
-                    temp_pointer = zeros(  # just use fill to speed this up?
+                    temp_pointer = zeros(  
                         (height_padded, width_padded), dtype="object")
 
                     temp_pointer[x:(h2+x), y:(w2+y)
@@ -675,7 +674,7 @@ def findBestConnectionPrim(segment_list, rootSegment, compare_type):
     return best_so_far
 
 
-# TODO no idea how to find the best one to start,  will do random for now! Myabe find piece with best connections
+# TODO no idea how to find the best one to start,  will do random for now! Maybe find piece with best connections
 def findBestRootSegment(segment_list):
     return random.choice(segment_list)
 
@@ -830,7 +829,6 @@ def main():
     show_building_animation = True
     show_print_statements = True
     boost_priority_of_big_pieces_joining = False
-    use_cross = False
     connect_best_friends_first = True
 
     colorType = ColorType.LAB
