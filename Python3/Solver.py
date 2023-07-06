@@ -807,7 +807,7 @@ def joinPieces(best_connection, segment_list, original_size):
 
 # TODO  Multiple edge layers.  Maybe corner pixels have some extra say?
 # TODO Maybe have it go in lines? Or at least start off with two lines one horizontal one vertical to build off and stop going out of bounds?
-# TODO maybe combo of kruskal and prims? Divide into blocks? LImit the number of trees? Force to use prims after awhile?
+# TODO maybe combo of kruskal and prims? Divide into blocks? Limit the number of trees? Force to use prims after awhile?
 # TODO do a best budy where each peice thinks the other is the best and get those done FIRST
 # TODO Different color spaces
 # TODO Find balance of second best ratio
