@@ -1,0 +1,17 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Local editor/cache files
+.vscode/
+*.ipch
+
+# Generated puzzle/output artifacts
+Python3/round*.png
+Python3/roundTest*.png
+Python3/something*.png
+Python3/original.png
+Python3/test*
+
+# Vendored binaries should not live in this source repo
+*.dll
