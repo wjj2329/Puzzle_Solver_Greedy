@@ -1,17 +1,40 @@
+# macOS
 .DS_Store
+
+# Python bytecode/cache
 __pycache__/
 *.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
 
 # Local editor/cache files
 .vscode/
+.idea/
+*.swp
+*.swo
 *.ipch
 
-# Generated puzzle/output artifacts
+# Test/build/cache output
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# Generated puzzle pieces and assembly snapshots
+Python3/[0-9]*_[0-9]*.png
 Python3/round*.png
 Python3/roundTest*.png
 Python3/something*.png
 Python3/original.png
-Python3/test*
+Python3/test round*.png
+Python3/gist.txt
 
 # Vendored binaries should not live in this source repo
 *.dll
+*.exe
