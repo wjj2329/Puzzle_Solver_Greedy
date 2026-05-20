@@ -40,6 +40,13 @@ Python3/something*.png
 Python3/original.png
 Python3/test round*.png
 Python3/gist.txt
+puzzle_solver/[0-9]*_[0-9]*.png
+puzzle_solver/round*.png
+puzzle_solver/roundTest*.png
+puzzle_solver/something*.png
+puzzle_solver/original.png
+puzzle_solver/test round*.png
+puzzle_solver/gist.txt
 
 # Vendored binaries should not live in this source repo
 *.dll

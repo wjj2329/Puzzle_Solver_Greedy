@@ -1,4 +1,4 @@
-# Runtime dependencies for Python3/Solver.py
+# Runtime dependencies for puzzle_solver/Solver.py
 numpy
 scipy
 imageio

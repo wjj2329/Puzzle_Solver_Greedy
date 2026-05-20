@@ -6,7 +6,7 @@ It was originally written as a Python learning project, so some parts of the cod
 
 ## How It Works
 
-At a high level, `Python3/Solver.py` does the following:
+At a high level, `puzzle_solver/Solver.py` does the following:
 
 1. Loads an input image.
 2. Splits the image into fixed-size square tiles.
@@ -31,7 +31,7 @@ The default path in `main()` uses LAB color, combined Euclidean/Mahalanobis scor
 
 ```text
 .
-├── Python3/
+├── puzzle_solver/
 │   ├── Solver.py      # Main puzzle splitting, scoring, and assembly code
 ├── input_image/
 │   └── William.png    # Example input image
@@ -68,10 +68,10 @@ pip install -r requirements.txt
 From the repository root:
 
 ```bash
-python Python3/Solver.py
+python puzzle_solver/Solver.py
 ```
 
-The solver is currently configured by editing variables inside `main()` in `Python3/Solver.py`.
+The solver is currently configured by editing variables inside `main()` in `puzzle_solver/Solver.py`.
 
 Important defaults:
 

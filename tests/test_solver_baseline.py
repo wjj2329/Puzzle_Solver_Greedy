@@ -13,7 +13,7 @@ except ModuleNotFoundError as exc:
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOLVER_DIR = ROOT / "Python3"
+SOLVER_DIR = ROOT / "puzzle_solver"
 
 
 def load_solver():
