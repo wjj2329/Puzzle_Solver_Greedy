@@ -15,10 +15,10 @@ from .score_helpers import reciprocalScoreEntries
 
 class ScoreEdge:
     def __init__(self, edge, adjacent_edge):
-        self.edge = edge
-        self.adjacent_edge = adjacent_edge
-        self.average_delta = np.average(edge - adjacent_edge, axis=0)
-        self.inverse_covariance = np.linalg.pinv(np.cov(edge.T))
+        self.edge = np.asarray(edge, dtype=np.float64)
+        self.adjacent_edge = np.asarray(adjacent_edge, dtype=np.float64)
+        self.average_delta = np.average(self.edge - self.adjacent_edge, axis=0)
+        self.inverse_covariance = np.linalg.pinv(np.cov(self.edge.T))
 
 
 class ScorePayload:
@@ -113,7 +113,7 @@ class Segment:
 
     def ownScoreEdges(self):
         if self._own_score_edges is None:
-            self._own_score_edges = self.buildScoreEdges(self.pic_matrix.astype(np.int16))
+            self._own_score_edges = self.buildScoreEdges(self.pic_matrix)
         return self._own_score_edges
 
     def compareScoreEdges(self):

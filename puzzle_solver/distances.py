@@ -2,7 +2,7 @@ import numpy as np
 
 
 def euclideanDistance(a, b):
-    diff = np.asarray(a) - np.asarray(b)
+    diff = np.asarray(a, dtype=np.float64) - np.asarray(b, dtype=np.float64)
     diff = diff.reshape(diff.shape[0], -1)
     return float(np.linalg.norm(diff, axis=1).sum())
 

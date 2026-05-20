@@ -191,6 +191,56 @@ class ScoreTests(unittest.TestCase):
 
         self.assertEqual(expected, segment.euclideanDistance(first, second))
 
+    def test_euclidean_distance_prevents_unsigned_byte_underflow(self):
+        first = np.asarray([[0, 10, 20]], dtype=np.uint8)
+        second = np.asarray([[255, 5, 25]], dtype=np.uint8)
+
+        self.assertEqual(
+            np.linalg.norm(np.asarray([-255.0, 5.0, -5.0])),
+            solver.euclideanDistance(first, second),
+        )
+
+    def test_score_edges_preserve_float_precision(self):
+        segment = self.make_segment(
+            np.asarray(
+                [
+                    [[1.2, 2.3, 3.4], [4.5, 5.6, 6.7]],
+                    [[7.8, 8.9, 9.1], [10.2, 11.3, 12.4]],
+                ]
+            ),
+            piece_number=1,
+        )
+
+        right_edge = segment.ownScoreEdges()[solver.JoinDirection.RIGHT]
+
+        self.assertTrue(np.issubdtype(right_edge.edge.dtype, np.floating))
+        np.testing.assert_allclose(right_edge.edge, segment.pic_matrix[:, -1, :])
+
+    def test_score_edges_prevent_unsigned_byte_underflow(self):
+        edge = np.asarray(
+            [
+                [0, 10, 20],
+                [5, 15, 25],
+                [10, 20, 30],
+            ],
+            dtype=np.uint8,
+        )
+        adjacent_edge = np.asarray(
+            [
+                [255, 5, 25],
+                [250, 10, 30],
+                [245, 15, 35],
+            ],
+            dtype=np.uint8,
+        )
+
+        score_edge = solver.ScoreEdge(edge, adjacent_edge)
+
+        np.testing.assert_allclose(
+            np.asarray([-245.0, 5.0, -5.0]),
+            score_edge.average_delta,
+        )
+
     def test_mahalanobis_distance_matches_legacy_pixel_loop(self):
         segment = self.make_segment(np.zeros((4, 4, 3)), piece_number=1)
         a = np.asarray(
@@ -273,6 +323,59 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(
             expected_right_score,
             score_dict[1, solver.JoinDirection.RIGHT, 2],
+        )
+
+    def test_combined_lab_scores_do_not_truncate_float_edges(self):
+        score_dict = {}
+        first = self.make_segment(
+            np.asarray(
+                [
+                    [[1.1, 2.2, 3.3], [4.4, 5.5, 6.6], [7.7, 8.8, 9.9]],
+                    [[2.1, 3.2, 4.3], [5.4, 6.5, 7.6], [8.7, 9.8, 10.9]],
+                    [[3.1, 4.2, 5.3], [6.4, 7.5, 8.6], [9.7, 10.8, 11.9]],
+                ]
+            ),
+            piece_number=1,
+            score_dict=score_dict,
+        )
+        second = self.make_segment(
+            np.asarray(
+                [
+                    [[1.6, 2.7, 3.8], [4.9, 6.0, 7.1], [8.2, 9.3, 10.4]],
+                    [[2.6, 3.7, 4.8], [5.9, 7.0, 8.1], [9.2, 10.3, 11.4]],
+                    [[3.6, 4.7, 5.8], [6.9, 8.0, 9.1], [10.2, 11.3, 12.4]],
+                ]
+            ),
+            piece_number=2,
+            score_dict=score_dict,
+        )
+
+        first.calculateScoreEuclideanAndMahalanobis(second)
+
+        expected_right_score = (
+            first.mahalanobisDistance(
+                first.pic_matrix[:, -1, :],
+                first.pic_matrix[:, -2, :],
+                second.pic_matrix[:, 0, :],
+                second.pic_matrix[:, 1, :],
+            ),
+            first.euclideanDistance(
+                first.pic_matrix[:, -1, :],
+                second.pic_matrix[:, 0, :],
+            ),
+        )
+        truncated_euclidean_score = first.euclideanDistance(
+            first.pic_matrix.astype(np.int16)[:, -1, :],
+            second.pic_matrix[:, 0, :],
+        )
+
+        self.assertEqual(
+            expected_right_score,
+            score_dict[1, solver.JoinDirection.RIGHT, 2],
+        )
+        self.assertNotEqual(
+            truncated_euclidean_score,
+            score_dict[1, solver.JoinDirection.RIGHT, 2][1],
         )
 
     def test_calculate_scores_can_run_without_progress_output(self):
