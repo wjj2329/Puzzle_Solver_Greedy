@@ -1,21 +1,18 @@
 import argparse
-import scipy as sp
 import numpy as np
 import random
 import sys
 import time
-import tkinter
-import math
 from copy import copy
-from imageio import imread, imsave
 from enum import Enum
-from scipy.ndimage.morphology import binary_dilation
-from PIL import ImageTk, Image
-from skimage import io, color
-from numpy import logical_and, zeros, nonzero, argwhere, delete, asarray, empty
+from pathlib import Path
+import imageio.v3 as iio
+from scipy.ndimage import binary_dilation
+from PIL import Image
+from skimage import color
+from numpy import logical_and, zeros, nonzero, argwhere, delete, asarray
 from numpy import sum as numpySum
 from numpy import all as numpyAll
-from numpy.linalg import norm
 import subprocess
 import scipy.signal
 
@@ -47,6 +44,23 @@ class ColorType(Enum):
 class AssemblyType(Enum):
     KRUSKAL = 1
     PRIM = 2
+
+
+class ScoreEdge:
+    def __init__(self, edge, adjacent_edge):
+        self.edge = edge
+        self.adjacent_edge = adjacent_edge
+        self.average_delta = np.average(edge - adjacent_edge, axis=0)
+        self.inverse_covariance = np.linalg.pinv(np.cov(edge.T))
+
+
+def prepareImageForWrite(image):
+    image = np.asarray(image)
+    if np.issubdtype(image.dtype, np.floating):
+        if image.size > 0 and image.min() >= 0 and image.max() <= 1:
+            image = image * 255
+        image = np.clip(image, 0, 255).round().astype(np.uint8)
+    return image
 
 
 class BestConnection:
@@ -106,6 +120,8 @@ class Segment:
         self.score_dict = score_dict
         self.gist = gist
         self.connections_dict = connections_dict
+        self._own_score_edges = None
+        self._compare_score_edges = None
 
     def __add__(self, other):
         if type(self) is Segment:
@@ -120,8 +136,27 @@ class Segment:
             return other
 
     def euclideanDistance(self, a, b):
-        temp = [norm(x - y) for x, y in zip(a, b)]
-        return sum(temp)
+        diff = np.asarray(a) - np.asarray(b)
+        diff = diff.reshape(diff.shape[0], -1)
+        return float(np.linalg.norm(diff, axis=1).sum())
+
+    def buildScoreEdges(self, pic_matrix):
+        return {
+            JoinDirection.UP: ScoreEdge(pic_matrix[0, :, :], pic_matrix[1, :, :]),
+            JoinDirection.DOWN: ScoreEdge(pic_matrix[-1, :, :], pic_matrix[-2, :, :]),
+            JoinDirection.LEFT: ScoreEdge(pic_matrix[:, 0, :], pic_matrix[:, 1, :]),
+            JoinDirection.RIGHT: ScoreEdge(pic_matrix[:, -1, :], pic_matrix[:, -2, :]),
+        }
+
+    def ownScoreEdges(self):
+        if self._own_score_edges is None:
+            self._own_score_edges = self.buildScoreEdges(self.pic_matrix.astype(np.int16))
+        return self._own_score_edges
+
+    def compareScoreEdges(self):
+        if self._compare_score_edges is None:
+            self._compare_score_edges = self.buildScoreEdges(self.pic_matrix)
+        return self._compare_score_edges
 
     def gistDistance(self, a, b, segment):
         colorScore = self.euclideanDistance(a, b)
@@ -130,68 +165,34 @@ class Segment:
         return (colorScore, gistScore)
 
     def mahalanobisDistance(self, a, a2, z, z2):
-        cov = np.linalg.pinv(sp.cov((a).T))
-        cov2 = np.linalg.pinv(sp.cov((z).T))
+        return self.mahalanobisEdgeDistance(ScoreEdge(a, a2), ScoreEdge(z, z2))
 
-        red_average_1 = np.average(a[:, 0]-a2[:, 0])
-        green_average_1 = np.average(a[:, 1]-a2[:, 1])
-        blue_average_1 = np.average(a[:, 2]-a2[:, 2])
+    def mahalanobisEdgeDistance(self, own_edge, compare_edge):
+        matrix = (own_edge.edge - compare_edge.edge) - own_edge.average_delta
+        matrix2 = (compare_edge.edge - own_edge.edge) - compare_edge.average_delta
 
-        red_average_2 = np.average(z[:, 0]-z2[:, 0])
-        green_average_2 = np.average(z[:, 1]-z2[:, 1])
-        blue_average_2 = np.average(z[:, 2]-z2[:, 2])
-
-        score = 0.0
-        testr1 = a[:, 0]-z[:, 0]
-        testg1 = a[:, 1]-z[:, 1]
-        testb1 = a[:, 2]-z[:, 2]
-
-        testr2 = z[:, 0]-a[:, 0]
-        testg2 = z[:, 1]-a[:, 1]
-        testb2 = z[:, 2]-a[:, 2]
-
-        for i in range(len(a)):
-            mymatrix = np.matrix(
-                [testr1[i]-red_average_1, testg1[i]-green_average_1, testb1[i]-blue_average_1])
-            mymatrix2 = np.matrix(
-                [testr2[i]-red_average_2, testg2[i]-green_average_2, testb2[i]-blue_average_2])
-            score += math.sqrt(abs(mymatrix*cov2*mymatrix.T))
-            score += math.sqrt(abs(mymatrix2*cov*mymatrix2.T))
-        return score
+        scores = np.einsum(
+            "ij,jk,ik->i", matrix, compare_edge.inverse_covariance, matrix)
+        scores2 = np.einsum(
+            "ij,jk,ik->i", matrix2, own_edge.inverse_covariance, matrix2)
+        return float(np.sqrt(np.abs(scores)).sum() + np.sqrt(np.abs(scores2)).sum())
 
     def calculateScoreMahalonbis(self, segment):
-        pic_matrix = self.pic_matrix.astype(np.int16)
-        mahalanobisDistance = self.mahalanobisDistance
+        own_edges = self.ownScoreEdges()
+        compare_edges = segment.compareScoreEdges()
+        mahalanobisDistance = self.mahalanobisEdgeDistance
         score_dict = self.score_dict
-        self_top = pic_matrix[0, :, :]
-        self_top2 = pic_matrix[1, :, :]
-        self_left = pic_matrix[:, 0, :]
-        self_left2 = pic_matrix[:, 1, :]
-        self_bottom = pic_matrix[-1, :, :]
-        self_bottom2 = pic_matrix[-2, :, :]
-        self_right = pic_matrix[:, -1, :]
-        self_right2 = pic_matrix[:, -2, :]
-
-        segment_matrix = segment.pic_matrix
-        compare_top = segment_matrix[0, :, :]
-        compare_top2 = segment_matrix[1, :, :]
-        compare_left = segment_matrix[:, 0, :]
-        compare_left2 = segment_matrix[:, 1, :]
-        compare_bottom = segment_matrix[-1, :, :]
-        compare_bottom2 = segment_matrix[-2, :, :]
-        compare_right = segment_matrix[:, -1, :]
-        compare_right2 = segment_matrix[:, -2, :]
 
         own_number = self.piece_number
         join_number = segment.piece_number
         score_dict[own_number, JoinDirection.UP,
-                   join_number] = mahalanobisDistance(self_top, self_top2, compare_bottom, compare_bottom2)
+                   join_number] = mahalanobisDistance(own_edges[JoinDirection.UP], compare_edges[JoinDirection.DOWN])
         score_dict[own_number, JoinDirection.DOWN,
-                   join_number] = mahalanobisDistance(self_bottom, self_bottom2, compare_top, compare_top2)
+                   join_number] = mahalanobisDistance(own_edges[JoinDirection.DOWN], compare_edges[JoinDirection.UP])
         score_dict[own_number, JoinDirection.LEFT,
-                   join_number] = mahalanobisDistance(self_left, self_left2, compare_right, compare_right2)
+                   join_number] = mahalanobisDistance(own_edges[JoinDirection.LEFT], compare_edges[JoinDirection.RIGHT])
         score_dict[own_number, JoinDirection.RIGHT,
-                   join_number] = mahalanobisDistance(self_right, self_right2, compare_left, compare_left2)
+                   join_number] = mahalanobisDistance(own_edges[JoinDirection.RIGHT], compare_edges[JoinDirection.LEFT])
 
         score_dict[join_number, JoinDirection.DOWN,
                    own_number] = score_dict[own_number, JoinDirection.UP,
@@ -251,28 +252,19 @@ class Segment:
         score_dict = self.score_dict
         euclideanDistance = self.euclideanDistance
 
-        pic_matrix = self.pic_matrix.astype(np.int16)
-        self_top = pic_matrix[0, :, :]
-        self_left = pic_matrix[:, 0, :]
-        self_bottom = pic_matrix[-1, :, :]
-        self_right = pic_matrix[:, -1, :]
-
-        segment_matrix = segment.pic_matrix
-        compare_top = segment_matrix[0, :, :]
-        compare_left = segment_matrix[:, 0, :]
-        compare_bottom = segment_matrix[-1, :, :]
-        compare_right = segment_matrix[:, -1, :]
+        own_edges = self.ownScoreEdges()
+        compare_edges = segment.compareScoreEdges()
 
         own_number = self.piece_number
         join_number = segment.piece_number
         score_dict[own_number, JoinDirection.UP,
-                   join_number] = euclideanDistance(self_top, compare_bottom)
+                   join_number] = euclideanDistance(own_edges[JoinDirection.UP].edge, compare_edges[JoinDirection.DOWN].edge)
         score_dict[own_number, JoinDirection.DOWN,
-                   join_number] = euclideanDistance(self_bottom, compare_top)
+                   join_number] = euclideanDistance(own_edges[JoinDirection.DOWN].edge, compare_edges[JoinDirection.UP].edge)
         score_dict[own_number, JoinDirection.LEFT,
-                   join_number] = euclideanDistance(self_left, compare_right)
+                   join_number] = euclideanDistance(own_edges[JoinDirection.LEFT].edge, compare_edges[JoinDirection.RIGHT].edge)
         score_dict[own_number, JoinDirection.RIGHT,
-                   join_number] = euclideanDistance(self_right, compare_left)
+                   join_number] = euclideanDistance(own_edges[JoinDirection.RIGHT].edge, compare_edges[JoinDirection.LEFT].edge)
 
         score_dict[join_number, JoinDirection.DOWN,
                    own_number] = score_dict[own_number, JoinDirection.UP,
@@ -288,39 +280,22 @@ class Segment:
                                             join_number]
 
     def calculateScoreEuclideanAndMahalonbis(self, segment):
-        pic_matrix = self.pic_matrix.astype(np.int16)
-        mahalanobisDistance = self.mahalanobisDistance
+        own_edges = self.ownScoreEdges()
+        compare_edges = segment.compareScoreEdges()
+        mahalanobisDistance = self.mahalanobisEdgeDistance
         euclideanDistance = self.euclideanDistance
         score_dict = self.score_dict
-        self_top = pic_matrix[0, :, :]
-        self_top2 = pic_matrix[1, :, :]
-        self_left = pic_matrix[:, 0, :]
-        self_left2 = pic_matrix[:, 1, :]
-        self_bottom = pic_matrix[-1, :, :]
-        self_bottom2 = pic_matrix[-2, :, :]
-        self_right = pic_matrix[:, -1, :]
-        self_right2 = pic_matrix[:, -2, :]
-
-        segment_matrix = segment.pic_matrix
-        compare_top = segment_matrix[0, :, :]
-        compare_top2 = segment_matrix[1, :, :]
-        compare_left = segment_matrix[:, 0, :]
-        compare_left2 = segment_matrix[:, 1, :]
-        compare_bottom = segment_matrix[-1, :, :]
-        compare_bottom2 = segment_matrix[-2, :, :]
-        compare_right = segment_matrix[:, -1, :]
-        compare_right2 = segment_matrix[:, -2, :]
 
         own_number = self.piece_number
         join_number = segment.piece_number
         score_dict[own_number, JoinDirection.UP,
-                   join_number] = (mahalanobisDistance(self_top, self_top2, compare_bottom, compare_bottom2), euclideanDistance(self_top, compare_bottom))
+                   join_number] = (mahalanobisDistance(own_edges[JoinDirection.UP], compare_edges[JoinDirection.DOWN]), euclideanDistance(own_edges[JoinDirection.UP].edge, compare_edges[JoinDirection.DOWN].edge))
         score_dict[own_number, JoinDirection.DOWN,
-                   join_number] = (mahalanobisDistance(self_bottom, self_bottom2, compare_top, compare_top2), euclideanDistance(self_bottom, compare_top))
+                   join_number] = (mahalanobisDistance(own_edges[JoinDirection.DOWN], compare_edges[JoinDirection.UP]), euclideanDistance(own_edges[JoinDirection.DOWN].edge, compare_edges[JoinDirection.UP].edge))
         score_dict[own_number, JoinDirection.LEFT,
-                   join_number] = (mahalanobisDistance(self_left, self_left2, compare_right, compare_right2), euclideanDistance(self_left, compare_right))
+                   join_number] = (mahalanobisDistance(own_edges[JoinDirection.LEFT], compare_edges[JoinDirection.RIGHT]), euclideanDistance(own_edges[JoinDirection.LEFT].edge, compare_edges[JoinDirection.RIGHT].edge))
         score_dict[own_number, JoinDirection.RIGHT,
-                   join_number] = (mahalanobisDistance(self_right, self_right2, compare_left, compare_left2), euclideanDistance(self_right, compare_left))
+                   join_number] = (mahalanobisDistance(own_edges[JoinDirection.RIGHT], compare_edges[JoinDirection.LEFT]), euclideanDistance(own_edges[JoinDirection.RIGHT].edge, compare_edges[JoinDirection.LEFT].edge))
 
         score_dict[join_number, JoinDirection.DOWN,
                    own_number] = score_dict[own_number, JoinDirection.UP,
@@ -608,10 +583,10 @@ def breakUpImage(image, length, save_segments, colortype, score_algorithum):
             gist = None
             if save_segments:
                 if colortype == ColorType.RGB:
-                    imsave(str(x)+"_"+str(y)+".png", save)
+                    iio.imwrite(str(x)+"_"+str(y)+".png", prepareImageForWrite(save))
                 elif colortype == ColorType.LAB:
                     imageTemp = color.lab2rgb(save)
-                    imsave(str(x)+"_"+str(y)+".png", imageTemp)
+                    iio.imwrite(str(x)+"_"+str(y)+".png", prepareImageForWrite(imageTemp))
                 elif score_algorithum == ScoreAlgorithum.GIST_AND_EUCLDEAN:
                     subprocess.run(["gist.exe", "-i", "C:\\Users\\wjones\\Desktop\\puzzle_solver\\Puzzle_Solver_Greedy\\Python3\\"+str(
                         x)+"_"+str(y)+".png", "-o", "C:\\Users\\wjones\\Desktop\\puzzle_solver\\Puzzle_Solver_Greedy\\Python3"])
@@ -626,9 +601,10 @@ def breakUpImage(image, length, save_segments, colortype, score_algorithum):
     return segments
 
 
-def calculateScores(segment_list, score_algorithum):
+def calculateScores(segment_list, score_algorithum, show_progress=True):
     for index, segment1 in enumerate(segment_list):
-        print("calcuating score for segment ", segment1.piece_number)
+        if show_progress:
+            print("calcuating score for segment ", segment1.piece_number)
         for segment2 in segment_list[index+1:]:
             if score_algorithum == ScoreAlgorithum.EUCLIDEAN:
                 segment1.calculateScoreEuclidean(segment2)
@@ -713,7 +689,7 @@ def saveImage(best_connection, piece_size, round, colortype, name_for_round):
     if colortype == ColorType.LAB:
         new_image = color.lab2rgb(new_image)
     imageName = name_for_round+" round"+str(round)+".png"
-    imsave(imageName, new_image)
+    iio.imwrite(imageName, prepareImageForWrite(new_image))
     return imageName
 
 
@@ -774,27 +750,46 @@ def checkFunctionCacsTheSameOnEachPeice(segment_list, boost_priority_of_big_piec
                 print(temp1 == temp2)
 
 
-def connectBestBudsFirst(segment_list, original_size):
-    for segment1 in segment_list:
-        best_so_far = BestConnection()
-        for segment2 in segment_list:
-            if segment1 != segment2:
-                segment1.best_connection_found_so_far = BestConnection()
-                temp = segment1.calculateConnectionsKruskal(segment2, False)
-                if temp.isBetterConnection(best_so_far, CompareWithOtherSegments.ONLY_BEST):
-                    best_so_far = temp
-        best_so_far2 = BestConnection()
-        for segment2 in segment_list:
-            if segment2 != best_so_far.join_segment:
-                best_so_far.join_segment.best_connection_found_so_far = BestConnection()
-                temp = best_so_far.join_segment.calculateConnectionsKruskal(
-                    segment2, False)
-                if temp.isBetterConnection(best_so_far2, CompareWithOtherSegments.ONLY_BEST):
-                    best_so_far2 = temp
-        print(best_so_far.own_segment.piece_number, " ", best_so_far.join_segment.piece_number,
-              " ", best_so_far2.own_segment.piece_number, " ", best_so_far2.join_segment.piece_number)
-        if best_so_far.own_segment.piece_number == best_so_far2.join_segment.piece_number and best_so_far.join_segment.piece_number == best_so_far2.own_segment.piece_number:
+def findBestBuddyConnection(segment, segment_list):
+    best_so_far = BestConnection()
+    for segment2 in segment_list:
+        if segment != segment2:
+            segment.best_connection_found_so_far = BestConnection()
+            temp = segment.calculateConnectionsKruskal(segment2, False)
+            if temp.isBetterConnection(best_so_far, CompareWithOtherSegments.ONLY_BEST):
+                best_so_far = temp
+    return best_so_far
+
+
+def connectBestBudsFirst(segment_list, original_size, show_progress=True):
+    candidates = list(segment_list)
+    best_by_segment = {
+        segment: findBestBuddyConnection(segment, candidates)
+        for segment in candidates
+    }
+    active_segments = set(segment_list)
+    for segment1 in candidates:
+        if segment1 not in active_segments:
+            continue
+        best_so_far = best_by_segment[segment1]
+        if best_so_far.join_segment not in active_segments:
+            continue
+        best_so_far2 = best_by_segment[best_so_far.join_segment]
+        is_mutual_best_match = (
+            best_so_far.own_segment.piece_number == best_so_far2.join_segment.piece_number
+            and best_so_far.join_segment.piece_number == best_so_far2.own_segment.piece_number
+        )
+        if show_progress:
+            status = "mutual match" if is_mutual_best_match else "checked"
+            print(
+                "Best-buddy check: "
+                f"{best_so_far.own_segment.piece_number} -> {best_so_far.join_segment.piece_number}; "
+                f"{best_so_far2.own_segment.piece_number} -> {best_so_far2.join_segment.piece_number} "
+                f"({status})"
+            )
+        if is_mutual_best_match:
             joinPieces(best_so_far2, segment_list, original_size)
+            active_segments.remove(best_so_far2.join_segment)
 
 
 def joinPieces(best_connection, segment_list, original_size):
@@ -821,10 +816,10 @@ def joinPieces(best_connection, segment_list, original_size):
 # Filter the image?  Gausian blur etc?
 def main():
     start_time = time.time()
-    picture_file_name = "william.png"
+    picture_file_name = Path(__file__).resolve().with_name("William.png")
     length = 30
     save_segments = True
-    image = imread(picture_file_name)
+    image = iio.imread(picture_file_name)
     save_assembly_to_disk = True
     show_building_animation = True
     show_print_statements = True
@@ -841,7 +836,7 @@ def main():
         image = color.rgb2lab(image)
     segment_list = breakUpImage(
         image, length, save_segments, colorType, scoreType)
-    calculateScores(segment_list, scoreType)
+    calculateScores(segment_list, scoreType, show_print_statements)
 
     normalizeScores(segment_list, scoreType)
     elapsed_time_secs = time.time() - start_time
@@ -849,6 +844,9 @@ def main():
         print("Calculate scores took: %s secs " % elapsed_time_secs)
     window, w = None, None
     if show_building_animation:
+        import tkinter
+        from PIL import ImageTk
+
         window = tkinter.Tk()
         window.title("Picture")
         img = ImageTk.PhotoImage(Image.open(picture_file_name))
@@ -858,7 +856,7 @@ def main():
     original_size = len(segment_list)
     root = None
     if connect_best_friends_first:
-        connectBestBudsFirst(segment_list, original_size)
+        connectBestBudsFirst(segment_list, original_size, show_print_statements)
     if assemblyType == AssemblyType.PRIM:
         root = findBestRootSegment(segment_list)
     while len(segment_list) > 1:
@@ -872,12 +870,13 @@ def main():
         joinPieces(best_connection, segment_list, original_size)
         root = best_connection.own_segment
         if save_assembly_to_disk:
-            updated_picture = ImageTk.PhotoImage(
-                Image.open(saveImage(best_connection, length, round, colorType, name_for_round)))
-            w.configure(image=updated_picture)
-            w.image = updated_picture
-            w.pack(side="bottom", fill="both", expand="no")
-            window.update()
+            image_name = saveImage(best_connection, length, round, colorType, name_for_round)
+            if show_building_animation:
+                updated_picture = ImageTk.PhotoImage(Image.open(image_name))
+                w.configure(image=updated_picture)
+                w.image = updated_picture
+                w.pack(side="bottom", fill="both", expand="no")
+                window.update()
         if show_print_statements == True:
             print("for round ", round, " i get score of ", best_connection.score, "the ratio for first to second best is ",
                   best_connection.score/best_connection.second_best_score, " it took ", time.time()-start_time)

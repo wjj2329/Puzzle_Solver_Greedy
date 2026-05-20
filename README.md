@@ -34,8 +34,11 @@ The default path in `main()` uses LAB color, combined Euclidean/Mahalanobis scor
 ├── Python3/
 │   ├── Solver.py      # Main puzzle splitting, scoring, and assembly code
 │   └── William.png    # Example input image
+├── tests/
+│   └── test_solver_baseline.py
 ├── .gitignore
-└── README.md
+├── README.md
+└── requirements.txt
 ```
 
 ## Requirements
@@ -52,12 +55,18 @@ This code depends on several scientific/image-processing Python packages:
 
 Because this is older exploratory code, it may need small dependency/version fixes on modern Python versions.
 
-## Running
-
-From the `Python3` directory:
+Install the Python dependencies with:
 
 ```bash
-python Solver.py
+pip install -r requirements.txt
+```
+
+## Running
+
+From the repository root:
+
+```bash
+python Python3/Solver.py
 ```
 
 The solver is currently configured by editing variables inside `main()` in `Python3/Solver.py`.
@@ -76,10 +85,12 @@ scoreType = ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS
 name_for_round = "test"
 ```
 
-On case-sensitive filesystems, update `picture_file_name` to match the bundled image name:
+## Testing
 
-```python
-picture_file_name = "William.png"
+After installing the dependencies, run the baseline test suite from the repository root:
+
+```bash
+python -m unittest discover
 ```
 
 ## Input Image Notes
@@ -108,12 +119,12 @@ These generated artifacts are ignored by Git.
 - Some scoring strategies are experimental or marked as unfinished.
 - The GIST workflow references a Windows-specific executable/path.
 - The solver is computationally expensive for larger tile counts.
-- The code has not yet been refactored into smaller modules or covered by tests.
+- The code has not yet been refactored into smaller modules.
 
 ## Possible Cleanup Ideas
 
 - Wire `argparse` into `main()` so the image, tile size, and algorithm can be selected from the command line.
-- Add a `requirements.txt` or `pyproject.toml`.
+- Add a `pyproject.toml`.
 - Separate image splitting, scoring, assembly, and rendering into modules.
 - Add a deterministic shuffle seed for repeatable runs.
-- Add tests around scoring and assembly constraints.
+- Expand tests around full puzzle assembly and known edge cases.

@@ -1,0 +1,6 @@
+# Runtime dependencies for Python3/Solver.py
+numpy
+scipy
+imageio
+Pillow
+scikit-image
