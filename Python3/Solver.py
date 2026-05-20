@@ -19,6 +19,11 @@ import subprocess
 import scipy.signal
 
 
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+IMAGE_INPUT_DIR = PROJECT_DIR / "input_image"
+IMAGE_OUTPUT_DIR = PROJECT_DIR / "output_image"
+
+
 class JoinDirection(Enum):
     UP = 1
     DOWN = 2
@@ -89,6 +94,12 @@ def prepareImageForWrite(image):
             image = image * 255
         image = np.clip(image, 0, 255).round().astype(np.uint8)
     return image
+
+
+def ensureOutputDirectory(output_dir=IMAGE_OUTPUT_DIR):
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
 
 
 def euclideanDistance(a, b):
@@ -668,7 +679,13 @@ def get_gist(filename):
     return [float(x) for x in data.split()]
 
 
-def breakUpImage(image, length, save_segments, color_type, score_algorithm):
+def breakUpImage(
+        image,
+        length,
+        save_segments,
+        color_type,
+        score_algorithm,
+        output_dir=IMAGE_OUTPUT_DIR):
     dimensions = image.shape
     if dimensions[0] != dimensions[1]:
         print("Only square images will work for now to keep things simple")
@@ -685,20 +702,22 @@ def breakUpImage(image, length, save_segments, color_type, score_algorithm):
     append = segments.append
     score_dict = {}
     connections_dict = {}
+    if save_segments:
+        output_dir = ensureOutputDirectory(output_dir)
     for x in range(num_of_pieces_width):
         for y in range(num_of_pieces_height):
             save = image[pic_x: pic_x+length, pic_y: pic_y+length, :]
             gist = None
             if save_segments:
+                image_path = output_dir / f"{x}_{y}.png"
                 if color_type == ColorType.RGB:
-                    iio.imwrite(str(x)+"_"+str(y)+".png", prepareImageForWrite(save))
+                    iio.imwrite(image_path, prepareImageForWrite(save))
                 elif color_type == ColorType.LAB:
                     image_temp = color.lab2rgb(save)
-                    iio.imwrite(str(x)+"_"+str(y)+".png", prepareImageForWrite(image_temp))
+                    iio.imwrite(image_path, prepareImageForWrite(image_temp))
                 elif score_algorithm == ScoreAlgorithm.GIST_AND_EUCLIDEAN:
-                    subprocess.run(["gist.exe", "-i", "C:\\Users\\wjones\\Desktop\\puzzle_solver\\Puzzle_Solver_Greedy\\Python3\\"+str(
-                        x)+"_"+str(y)+".png", "-o", "C:\\Users\\wjones\\Desktop\\puzzle_solver\\Puzzle_Solver_Greedy\\Python3"])
-                    gist = get_gist("gist.txt")
+                    subprocess.run(["gist.exe", "-i", str(image_path), "-o", str(output_dir)])
+                    gist = get_gist(output_dir / "gist.txt")
             segment_to_append = Segment(save, num_of_pieces_width,
                                         num_of_pieces_height, piece_num, piece_num, score_dict, gist, connections_dict)
             append(segment_to_append)
@@ -880,7 +899,13 @@ def clearDictionaryForRam(my_list, removing):
                 del connection.connections_dict[key]
 
 
-def saveImage(best_connection, piece_size, round_number, color_type, name_for_round):
+def saveImage(
+        best_connection,
+        piece_size,
+        round_number,
+        color_type,
+        name_for_round,
+        output_dir=IMAGE_OUTPUT_DIR):
     pic_locations = best_connection.binary_connection_matrix.nonzero()
     biggestx = max(pic_locations[0])
     biggesty = max(pic_locations[1])
@@ -898,9 +923,10 @@ def saveImage(best_connection, piece_size, round_number, color_type, name_for_ro
         new_image[x1:x1+piece_size, y1:y1+piece_size, :] = piece_to_assemble
     if color_type == ColorType.LAB:
         new_image = color.lab2rgb(new_image)
-    image_name = name_for_round+" round"+str(round_number)+".png"
-    iio.imwrite(image_name, prepareImageForWrite(new_image))
-    return image_name
+    output_dir = ensureOutputDirectory(output_dir)
+    image_path = output_dir / f"{name_for_round} round{round_number}.png"
+    iio.imwrite(image_path, prepareImageForWrite(new_image))
+    return str(image_path)
 
 
 def normalizeScores(segment_list, score_algorithm):
@@ -1026,7 +1052,7 @@ def joinPieces(best_connection, segment_list, original_size):
 # Filter the image?  Gaussian blur etc?
 def main():
     start_time = time.time()
-    picture_file_name = Path(__file__).resolve().with_name("William.png")
+    picture_file_name = IMAGE_INPUT_DIR / "William.png"
     length = 30
     save_segments = True
     image = iio.imread(picture_file_name)

@@ -4,6 +4,7 @@ import math
 import sys
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 try:
     import numpy as np
@@ -403,6 +404,58 @@ class ImageWriteTests(unittest.TestCase):
 
         self.assertEqual(np.uint8, prepared.dtype)
         np.testing.assert_array_equal(np.asarray([[[0, 127, 255]]], dtype=np.uint8), prepared)
+
+    def test_break_up_image_writes_saved_segments_to_output_directory(self):
+        image = np.arange(2 * 2 * 3, dtype=np.uint8).reshape((2, 2, 3))
+
+        with TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "output_image"
+
+            solver.breakUpImage(
+                image,
+                length=1,
+                save_segments=True,
+                color_type=solver.ColorType.RGB,
+                score_algorithm=solver.ScoreAlgorithm.EUCLIDEAN,
+                output_dir=output_dir,
+            )
+
+            self.assertEqual(
+                ["0_0.png", "0_1.png", "1_0.png", "1_1.png"],
+                sorted(path.name for path in output_dir.glob("*.png")),
+            )
+
+    def test_save_image_writes_assembly_snapshot_to_output_directory(self):
+        segment = solver.Segment(
+            np.full((2, 2, 3), 10, dtype=np.uint8),
+            max_width=1,
+            max_height=1,
+            piece_number=1,
+            component_id=1,
+            score_dict={},
+            gist=None,
+            connections_dict={},
+        )
+        connection = solver.BestConnection(
+            pic_connection_matrix=np.asarray([[segment]], dtype=object),
+            binary_connection_matrix=np.asarray([[1]]),
+        )
+
+        with TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "output_image"
+
+            image_path = Path(solver.saveImage(
+                connection,
+                piece_size=2,
+                round_number=0,
+                color_type=solver.ColorType.RGB,
+                name_for_round="test",
+                output_dir=output_dir,
+            ))
+
+            self.assertEqual(output_dir, image_path.parent)
+            self.assertEqual("test round0.png", image_path.name)
+            self.assertTrue(image_path.exists())
 
 
 class ConnectionTests(unittest.TestCase):

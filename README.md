@@ -33,7 +33,9 @@ The default path in `main()` uses LAB color, combined Euclidean/Mahalanobis scor
 .
 ├── Python3/
 │   ├── Solver.py      # Main puzzle splitting, scoring, and assembly code
+├── input_image/
 │   └── William.png    # Example input image
+├── output_image/     # Generated puzzle pieces and assembly snapshots
 ├── tests/
 │   └── test_solver_baseline.py
 ├── .gitignore
@@ -74,7 +76,7 @@ The solver is currently configured by editing variables inside `main()` in `Pyth
 Important defaults:
 
 ```python
-picture_file_name = Path(__file__).resolve().with_name("William.png")
+picture_file_name = IMAGE_INPUT_DIR / "William.png"
 length = 30
 save_segments = True
 save_assembly_to_disk = True
@@ -89,6 +91,8 @@ name_for_round = "test"
 ```
 
 `score_workers = None` uses the available CPU count for score calculation. Set it to `1` to force serial scoring. `score_executor` can be `"serial"`, `"thread"`, or `"process"`. The default `"process"` backend gives true multi-core parallelism for the score-calculation phase.
+
+Generated tile and assembly images are written to the repo-level `output_image/` directory.
 
 To benchmark score-calculation backends on generated image data:
 
@@ -118,8 +122,8 @@ For example, the bundled `William.png` is `960x960`, so a tile length of `30` cr
 
 Depending on the settings in `main()`, running the solver can generate:
 
-- Individual tile images such as `0_0.png`, `0_1.png`, etc.
-- Assembly snapshots such as `test round0.png`, `test round1.png`, etc.
+- Individual tile images such as `output_image/0_0.png`, `output_image/0_1.png`, etc.
+- Assembly snapshots such as `output_image/test round0.png`, `output_image/test round1.png`, etc.
 - GIST output files if the GIST path is used.
 
 These generated artifacts are ignored by Git.

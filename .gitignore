@@ -27,6 +27,12 @@ dist/
 *.egg-info/
 
 # Generated puzzle pieces and assembly snapshots
+output_image/*
+!output_image/.gitkeep
+
+# Legacy generated output locations
+images/*
+!images/.gitkeep
 Python3/[0-9]*_[0-9]*.png
 Python3/round*.png
 Python3/roundTest*.png
