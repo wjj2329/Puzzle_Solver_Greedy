@@ -13,8 +13,8 @@ from scipy.ndimage import binary_dilation
 from PIL import Image
 from skimage import color
 from numpy import logical_and, zeros, nonzero, argwhere, delete, asarray
-from numpy import sum as numpySum
-from numpy import all as numpyAll
+from numpy import sum as numpy_sum
+from numpy import all as numpy_all
 import subprocess
 import scipy.signal
 
@@ -46,10 +46,10 @@ class CompareWithOtherSegments(Enum):
     COMPARE_WITH_SECOND = 2
 
 
-class ScoreAlgorithum(Enum):
+class ScoreAlgorithm(Enum):
     EUCLIDEAN = 1
     MAHALANOBIS = 2
-    GIST_AND_EUCLDEAN = 3
+    GIST_AND_EUCLIDEAN = 3
     EUCLIDEAN_AND_MAHALANOBIS = 4
 
 
@@ -116,10 +116,10 @@ def reciprocalScoreEntries(own_number, join_number, scores_by_direction):
     return entries
 
 
-def scorePayloadPair(segment1, segment2, score_algorithum):
+def scorePayloadPair(segment1, segment2, score_algorithm):
     own_edges = segment1.own_edges
     compare_edges = segment2.compare_edges
-    if score_algorithum == ScoreAlgorithum.EUCLIDEAN:
+    if score_algorithm == ScoreAlgorithm.EUCLIDEAN:
         scores = [
             (
                 own_direction,
@@ -130,7 +130,7 @@ def scorePayloadPair(segment1, segment2, score_algorithum):
             )
             for own_direction, compare_direction in JOIN_EDGE_PAIRS
         ]
-    elif score_algorithum == ScoreAlgorithum.MAHALANOBIS:
+    elif score_algorithm == ScoreAlgorithm.MAHALANOBIS:
         scores = [
             (
                 own_direction,
@@ -141,7 +141,7 @@ def scorePayloadPair(segment1, segment2, score_algorithum):
             )
             for own_direction, compare_direction in JOIN_EDGE_PAIRS
         ]
-    elif score_algorithum == ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS:
+    elif score_algorithm == ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS:
         scores = [
             (
                 own_direction,
@@ -163,10 +163,10 @@ def scorePayloadPair(segment1, segment2, score_algorithum):
     return reciprocalScoreEntries(segment1.piece_number, segment2.piece_number, scores)
 
 
-def initializeScoreWorker(score_payloads, score_algorithum):
+def initializeScoreWorker(score_payloads, score_algorithm):
     global _SCORE_PAYLOADS, _SCORE_ALGORITHM
     _SCORE_PAYLOADS = score_payloads
-    _SCORE_ALGORITHM = score_algorithum
+    _SCORE_ALGORITHM = score_algorithm
 
 
 def scoreEntriesForPayloadIndex(index):
@@ -199,37 +199,37 @@ class BestConnection:
     score = sys.maxsize
     second_best_score = sys.maxsize
 
-    def __init__(self, own_segment=None, pic_connection_matix=None, join_segment=None, binary_connection_matrix=None):
+    def __init__(self, own_segment=None, pic_connection_matrix=None, join_segment=None, binary_connection_matrix=None):
         self.own_segment = own_segment
-        self.pic_connection_matix = pic_connection_matix
+        self.pic_connection_matrix = pic_connection_matrix
         self.join_segment = join_segment
         self.binary_connection_matrix = binary_connection_matrix
 
-    def setThings(self, pic_connection_matix, join_segment, score, own_segment, binary_connection_matrix):
+    def setConnection(self, pic_connection_matrix, join_segment, score, own_segment, binary_connection_matrix):
         self.second_best_score = self.score
-        self.pic_connection_matix = pic_connection_matix
+        self.pic_connection_matrix = pic_connection_matrix
         self.join_segment = join_segment
         self.score = score
         self.own_segment = own_segment
         self.binary_connection_matrix = binary_connection_matrix
 
-    def isBetterConnection(self, otherConnection, compare_type):
+    def isBetterConnection(self, other_connection, compare_type):
         if compare_type == CompareWithOtherSegments.ONLY_BEST:
-            return self.score < otherConnection.score
+            return self.score < other_connection.score
         elif compare_type == CompareWithOtherSegments.COMPARE_WITH_SECOND:
-            return (2*(self.score*((self.score/self.second_best_score))))+self.score < otherConnection.score+(2*(otherConnection.score*((otherConnection.score/otherConnection.second_best_score))))
+            return (2*(self.score*((self.score/self.second_best_score))))+self.score < other_connection.score+(2*(other_connection.score*((other_connection.score/other_connection.second_best_score))))
 
     def stripZeros(self):
-        self.pic_connection_matix = self.pic_connection_matix[~numpyAll(
-            self.pic_connection_matix == 0, axis=1)]
-        self.binary_connection_matrix = self.binary_connection_matrix[~numpyAll(
+        self.pic_connection_matrix = self.pic_connection_matrix[~numpy_all(
+            self.pic_connection_matrix == 0, axis=1)]
+        self.binary_connection_matrix = self.binary_connection_matrix[~numpy_all(
             self.binary_connection_matrix == 0, axis=1)]
         idx = argwhere(
-            numpyAll(self.pic_connection_matix[..., :] == 0, axis=0))
-        self.pic_connection_matix = delete(
-            self.pic_connection_matix, idx, axis=1)
+            numpy_all(self.pic_connection_matrix[..., :] == 0, axis=0))
+        self.pic_connection_matrix = delete(
+            self.pic_connection_matrix, idx, axis=1)
         idx = argwhere(
-            numpyAll(self.binary_connection_matrix[..., :] == 0, axis=0))
+            numpy_all(self.binary_connection_matrix[..., :] == 0, axis=0))
         self.binary_connection_matrix = delete(
             self.binary_connection_matrix, idx, axis=1)
 
@@ -242,13 +242,13 @@ class Segment:
     binary_connection_matrix = asarray([[1, 0], [0, 0]])
     best_connection_found_so_far = BestConnection()
 
-    def __init__(self, pic_matrix, max_width, max_height, piece_number, myownNumber, score_dict, gist, connections_dict):
+    def __init__(self, pic_matrix, max_width, max_height, piece_number, component_id, score_dict, gist, connections_dict):
         self.pic_matrix = pic_matrix
-        self.pic_connection_matix = asarray([[self, 0], [0, 0]])
+        self.pic_connection_matrix = asarray([[self, 0], [0, 0]])
         self.max_width = max_width
         self.max_height = max_height
         self.piece_number = piece_number
-        self.myownNumber = myownNumber
+        self.component_id = component_id
         self.score_dict = score_dict
         self.gist = gist
         self.connections_dict = connections_dict
@@ -312,7 +312,7 @@ class Segment:
             ],
         )
 
-    def scoreEntriesMahalonbis(self, segment):
+    def scoreEntriesMahalanobis(self, segment):
         own_edges = self.ownScoreEdges()
         compare_edges = segment.compareScoreEdges()
         return self.reciprocalScoreEntries(
@@ -329,7 +329,7 @@ class Segment:
             ],
         )
 
-    def scoreEntriesEuclideanAndMahalonbis(self, segment):
+    def scoreEntriesEuclideanAndMahalanobis(self, segment):
         own_edges = self.ownScoreEdges()
         compare_edges = segment.compareScoreEdges()
         return self.reciprocalScoreEntries(
@@ -357,10 +357,10 @@ class Segment:
             self.score_dict[key] = score
 
     def gistDistance(self, a, b, segment):
-        colorScore = self.euclideanDistance(a, b)
-        gistScore = self.euclideanDistance(
+        color_score = self.euclideanDistance(a, b)
+        gist_score = self.euclideanDistance(
             np.asarray([self.gist]), np.asarray([segment.gist]))
-        return (colorScore, gistScore)
+        return (color_score, gist_score)
 
     def mahalanobisDistance(self, a, a2, z, z2):
         return self.mahalanobisEdgeDistance(ScoreEdge(a, a2), ScoreEdge(z, z2))
@@ -368,13 +368,13 @@ class Segment:
     def mahalanobisEdgeDistance(self, own_edge, compare_edge):
         return mahalanobisEdgeDistance(own_edge, compare_edge)
 
-    def calculateScoreMahalonbis(self, segment):
-        self.applyScoreEntries(self.scoreEntriesMahalonbis(segment))
+    def calculateScoreMahalanobis(self, segment):
+        self.applyScoreEntries(self.scoreEntriesMahalanobis(segment))
 
     def calculateScoreGIST(self, segment):  # this doesn't work :(
         size = segment.pic_matrix.shape[0]
         score_dict = self.score_dict
-        gistDistance = self.gistDistance
+        gist_distance = self.gistDistance
 
         pic_matrix = self.pic_matrix
         self_top = pic_matrix[0:1, :, :]
@@ -391,13 +391,13 @@ class Segment:
         own_number = self.piece_number
         join_number = segment.piece_number
         score_dict[own_number, JoinDirection.UP,
-                   join_number] = gistDistance(self_top, compare_bottom, segment)
+                   join_number] = gist_distance(self_top, compare_bottom, segment)
         score_dict[own_number, JoinDirection.DOWN,
-                   join_number] = gistDistance(self_bottom, compare_top, segment)
+                   join_number] = gist_distance(self_bottom, compare_top, segment)
         score_dict[own_number, JoinDirection.LEFT,
-                   join_number] = gistDistance(self_left, compare_right, segment)
+                   join_number] = gist_distance(self_left, compare_right, segment)
         score_dict[own_number, JoinDirection.RIGHT,
-                   join_number] = gistDistance(self_right, compare_left, segment)
+                   join_number] = gist_distance(self_right, compare_left, segment)
 
         score_dict[join_number, JoinDirection.DOWN,
                    own_number] = score_dict[own_number, JoinDirection.UP,
@@ -415,8 +415,8 @@ class Segment:
     def calculateScoreEuclidean(self, segment):
         self.applyScoreEntries(self.scoreEntriesEuclidean(segment))
 
-    def calculateScoreEuclideanAndMahalonbis(self, segment):
-        self.applyScoreEntries(self.scoreEntriesEuclideanAndMahalonbis(segment))
+    def calculateScoreEuclideanAndMahalanobis(self, segment):
+        self.applyScoreEntries(self.scoreEntriesEuclideanAndMahalanobis(segment))
 
     def checkforcompatibility(self, booleanarray, max_height, max_width):
         non_zero_values = nonzero(booleanarray)
@@ -435,7 +435,7 @@ class Segment:
         self_binary_matrix[2:shape[0]+2, 2:shape[1] +
                            2] = self.binary_connection_matrix
         self_pic_matrix = np.zeros((shape[0]+4, shape[1]+4), dtype="object")
-        self_pic_matrix[2:shape[0]+2, 2:shape[1]+2] = self.pic_connection_matix
+        self_pic_matrix[2:shape[0]+2, 2:shape[1]+2] = self.pic_connection_matrix
         pieces_to_check = self_pic_matrix.nonzero()
         score_dict = self.score_dict
         checkforcompatibility = self.checkforcompatibility
@@ -443,81 +443,81 @@ class Segment:
         for x, y in zip(pieces_to_check[0], pieces_to_check[1]):
             if self_pic_matrix[x+1][y] == 0:
                 score = 0
-                numberofsides = 1
+                number_of_sides = 1
                 score += score_dict[self_pic_matrix[x][y].piece_number,
                                     JoinDirection.DOWN, compare_segment_piece_number]
                 if self_pic_matrix[x+2][y] != 0:  # check piece to right down and left
                     score += score_dict[compare_segment_piece_number,
                                         JoinDirection.DOWN, self_pic_matrix[x+2][y].piece_number]
-                    numberofsides += 1
+                    number_of_sides += 1
 
                 if self_pic_matrix[x+1][y+1] != 0:
                     score += score_dict[compare_segment_piece_number,
                                         JoinDirection.RIGHT, self_pic_matrix[x+1][y+1].piece_number]
-                    numberofsides += 1
+                    number_of_sides += 1
 
                 if self_pic_matrix[x+1][y-1] != 0:
                     score += score_dict[compare_segment_piece_number,
                                         JoinDirection.LEFT, self_pic_matrix[x+1][y-1].piece_number]
-                    numberofsides += 1
-                score = score/numberofsides
+                    number_of_sides += 1
+                score = score/number_of_sides
                 if score < best_connection_found_so_far.score:
                     temp_pic_matrix = copy(self_pic_matrix)
                     temp_binary_matrix = copy(self_binary_matrix)
                     temp_pic_matrix[x+1, y] = compare_segment
                     temp_binary_matrix[x+1, y] = 1
                     if checkforcompatibility(temp_binary_matrix, self.max_height, self.max_width):
-                        best_connection_found_so_far.setThings(
+                        best_connection_found_so_far.setConnection(
                             temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
 
             if self_pic_matrix[x-1][y] == 0:
                 score = 0
-                numberofsides = 1
+                number_of_sides = 1
                 score += score_dict[self_pic_matrix[x][y].piece_number,
                                     JoinDirection.UP, compare_segment_piece_number]
                 if self_pic_matrix[x-2][y] != 0:  # check piece to right down and left
                     score += score_dict[compare_segment_piece_number,
                                         JoinDirection.UP, self_pic_matrix[x-2][y].piece_number]
-                    numberofsides += 1
+                    number_of_sides += 1
 
                 if self_pic_matrix[x-1][y+1] != 0:
                     score += score_dict[compare_segment_piece_number,
                                         JoinDirection.RIGHT, self_pic_matrix[x-1][y+1].piece_number]
-                    numberofsides += 1
+                    number_of_sides += 1
 
                 if self_pic_matrix[x-1][y-1] != 0:
                     score += score_dict[compare_segment_piece_number,
                                         JoinDirection.LEFT, self_pic_matrix[x-1][y-1].piece_number]
-                    numberofsides += 1
-                score = score/numberofsides
+                    number_of_sides += 1
+                score = score/number_of_sides
                 if score < best_connection_found_so_far.score:
                     temp_pic_matrix = copy(self_pic_matrix)
                     temp_binary_matrix = copy(self_binary_matrix)
                     temp_pic_matrix[x-1, y] = compare_segment
                     temp_binary_matrix[x-1, y] = 1
                     if checkforcompatibility(temp_binary_matrix, self.max_height, self.max_width):
-                        best_connection_found_so_far.setThings(
+                        best_connection_found_so_far.setConnection(
                             temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
             if self_pic_matrix[x][y+1] == 0:
                 score = 0
-                numberofsides = 1
+                number_of_sides = 1
                 score += score_dict[self_pic_matrix[x][y].piece_number,
                                     JoinDirection.RIGHT, compare_segment_piece_number]
                 if self_pic_matrix[x][y+2] != 0:
                     score += score_dict[compare_segment_piece_number,
                                         JoinDirection.RIGHT, self_pic_matrix[x][y+2].piece_number]
-                    numberofsides += 1
+                    number_of_sides += 1
 
                 if self_pic_matrix[x+1][y+1] != 0:
                     score += score_dict[compare_segment_piece_number,
                                         JoinDirection.DOWN, self_pic_matrix[x+1][y+1].piece_number]
-                    numberofsides += 1
+                    number_of_sides += 1
 
                 if self_pic_matrix[x-1][y+1] != 0:
                     score += score_dict[compare_segment_piece_number,
                                         JoinDirection.UP, self_pic_matrix[x-1][y+1].piece_number]
-                    numberofsides += 1
-                score = score/numberofsides
+                    number_of_sides += 1
+                score = score/number_of_sides
 
                 if score < best_connection_found_so_far.score:
                     temp_pic_matrix = copy(self_pic_matrix)
@@ -525,33 +525,33 @@ class Segment:
                     temp_pic_matrix[x, y+1] = compare_segment
                     temp_binary_matrix[x, y+1] = 1
                     if checkforcompatibility(temp_binary_matrix, self.max_height, self.max_width):
-                        best_connection_found_so_far.setThings(
+                        best_connection_found_so_far.setConnection(
                             temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
             if self_pic_matrix[x][y-1] == 0:
                 score = 0
-                numberofsides = 1
+                number_of_sides = 1
                 score += score_dict[self_pic_matrix[x][y].piece_number,
                                     JoinDirection.LEFT, compare_segment_piece_number]
                 if self_pic_matrix[x][y-2] != 0:
                     score += score_dict[compare_segment_piece_number,
                                         JoinDirection.LEFT, self_pic_matrix[x][y-2].piece_number]
-                    numberofsides += 1
+                    number_of_sides += 1
                 if self_pic_matrix[x+1][y-1] != 0:
                     score += score_dict[compare_segment_piece_number,
                                         JoinDirection.DOWN, self_pic_matrix[x+1][y-1].piece_number]
-                    numberofsides += 1
+                    number_of_sides += 1
                 if self_pic_matrix[x-1][y-1] != 0:
                     score += score_dict[compare_segment_piece_number,
                                         JoinDirection.UP, self_pic_matrix[x-1][y-1].piece_number]
-                    numberofsides += 1
-                score = score/numberofsides
+                    number_of_sides += 1
+                score = score/number_of_sides
                 if score < best_connection_found_so_far.score:
                     temp_pic_matrix = copy(self_pic_matrix)
                     temp_binary_matrix = copy(self_binary_matrix)
                     temp_pic_matrix[x, y-1] = compare_segment
                     temp_binary_matrix[x, y-1] = 1
                     if checkforcompatibility(temp_binary_matrix, self.max_height, self.max_width):
-                        best_connection_found_so_far.setThings(
+                        best_connection_found_so_far.setConnection(
                             temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
         return best_connection_found_so_far
 
@@ -564,15 +564,15 @@ class Segment:
         return v
 
     def calculateConnectionsKruskal(self, compare_segment, boost_priority_of_big_pieces_joining):
-        if (self.myownNumber, compare_segment.myownNumber) in self.connections_dict:
-            return self.connections_dict[(self.myownNumber, compare_segment.myownNumber)]
+        if (self.component_id, compare_segment.component_id) in self.connections_dict:
+            return self.connections_dict[(self.component_id, compare_segment.component_id)]
         checkforcompatibility = self.checkforcompatibility
         score_dict = self.score_dict
         best_connection_found_so_far = self.best_connection_found_so_far
         own_binary_connection_matrix = self.binary_connection_matrix
         compare_segment_binary_connection_matrix = compare_segment.binary_connection_matrix
-        own_pic_connection_matrix = self.pic_connection_matix
-        compare_segment_pic_connection_matrix = compare_segment.pic_connection_matix
+        own_pic_connection_matrix = self.pic_connection_matrix
+        compare_segment_pic_connection_matrix = compare_segment.pic_connection_matrix
         h1 = own_binary_connection_matrix.shape[0]
         w1 = own_binary_connection_matrix.shape[1]
         h2 = compare_segment_binary_connection_matrix.shape[0]
@@ -598,18 +598,18 @@ class Segment:
                 pad_with_piece2 = zeros(neighboring_connections_shape)
                 pad_with_piece2[x:(x+h2), y:(y+w2)
                                 ] = compare_segment_binary_connection_matrix
-                if not numpySum(logical_and(
+                if not numpy_sum(logical_and(
                         neighboring_connections, pad_with_piece2)[:]) > 0:
                     continue
-                if numpySum(logical_and(
+                if numpy_sum(logical_and(
                         pad_with_piece1, pad_with_piece2)[:]) > 0:
                     continue
                 combined_pieces = pad_with_piece1+pad_with_piece2
                 if checkforcompatibility(combined_pieces, max_height, max_width):
                     store = nonzero(pad_with_piece1)
                     score = 0
-                    numofcompar = 0
-                    temp_pointer = zeros(  
+                    comparison_count = 0
+                    temp_pointer = zeros(
                         (height_padded, width_padded), dtype="object")
 
                     temp_pointer[x:(h2+x), y:(w2+y)
@@ -618,30 +618,30 @@ class Segment:
                     for d, h in zip(store[0], store[1]):
                         node1 = combined_pointer[d, h].piece_number
                         if pad_with_piece2[d][h+1] == 1:
-                            numofcompar += 1
+                            comparison_count += 1
                             score += score_dict[node1,
                                                 JoinDirection.RIGHT, combined_pointer[d, h+1].piece_number]
                         if pad_with_piece2[d][h-1] == 1:
-                            numofcompar += 1
+                            comparison_count += 1
                             score += score_dict[node1,
                                                 JoinDirection.LEFT, combined_pointer[d, h-1].piece_number]
                         if pad_with_piece2[d+1][h] == 1:
-                            numofcompar += 1
+                            comparison_count += 1
                             score += score_dict[node1,
                                                 JoinDirection.DOWN, combined_pointer[d+1, h].piece_number]
                         if pad_with_piece2[d-1][h] == 1:
-                            numofcompar += 1
+                            comparison_count += 1
                             score += score_dict[node1,
                                                 JoinDirection.UP, combined_pointer[d-1, h].piece_number]
                     if boost_priority_of_big_pieces_joining:
-                        score = score/((numofcompar*numofcompar)*0.5)
+                        score = score/((comparison_count*comparison_count)*0.5)
                     else:
-                        score = score/numofcompar
+                        score = score/comparison_count
                     if score < best_connection_found_so_far.score:
-                        best_connection_found_so_far.setThings(
+                        best_connection_found_so_far.setConnection(
                             combined_pointer, compare_segment, score, self, combined_pieces)
         self.connections_dict[(
-            self.myownNumber, compare_segment.myownNumber)] = best_connection_found_so_far
+            self.component_id, compare_segment.component_id)] = best_connection_found_so_far
         return best_connection_found_so_far
 
 
@@ -668,7 +668,7 @@ def get_gist(filename):
     return [float(x) for x in data.split()]
 
 
-def breakUpImage(image, length, save_segments, colortype, score_algorithum):
+def breakUpImage(image, length, save_segments, color_type, score_algorithm):
     dimensions = image.shape
     if dimensions[0] != dimensions[1]:
         print("Only square images will work for now to keep things simple")
@@ -678,7 +678,7 @@ def breakUpImage(image, length, save_segments, colortype, score_algorithum):
         exit()
     segments = []
     x, y = 0, 0
-    picX, picY = 0, 0
+    pic_x, pic_y = 0, 0
     piece_num = 1
     num_of_pieces_width = int(dimensions[0]/length)
     num_of_pieces_height = int(dimensions[1]/length)
@@ -687,15 +687,15 @@ def breakUpImage(image, length, save_segments, colortype, score_algorithum):
     connections_dict = {}
     for x in range(num_of_pieces_width):
         for y in range(num_of_pieces_height):
-            save = image[picX: picX+length, picY: picY+length, :]
+            save = image[pic_x: pic_x+length, pic_y: pic_y+length, :]
             gist = None
             if save_segments:
-                if colortype == ColorType.RGB:
+                if color_type == ColorType.RGB:
                     iio.imwrite(str(x)+"_"+str(y)+".png", prepareImageForWrite(save))
-                elif colortype == ColorType.LAB:
-                    imageTemp = color.lab2rgb(save)
-                    iio.imwrite(str(x)+"_"+str(y)+".png", prepareImageForWrite(imageTemp))
-                elif score_algorithum == ScoreAlgorithum.GIST_AND_EUCLDEAN:
+                elif color_type == ColorType.LAB:
+                    image_temp = color.lab2rgb(save)
+                    iio.imwrite(str(x)+"_"+str(y)+".png", prepareImageForWrite(image_temp))
+                elif score_algorithm == ScoreAlgorithm.GIST_AND_EUCLIDEAN:
                     subprocess.run(["gist.exe", "-i", "C:\\Users\\wjones\\Desktop\\puzzle_solver\\Puzzle_Solver_Greedy\\Python3\\"+str(
                         x)+"_"+str(y)+".png", "-o", "C:\\Users\\wjones\\Desktop\\puzzle_solver\\Puzzle_Solver_Greedy\\Python3"])
                     gist = get_gist("gist.txt")
@@ -703,42 +703,42 @@ def breakUpImage(image, length, save_segments, colortype, score_algorithum):
                                         num_of_pieces_height, piece_num, piece_num, score_dict, gist, connections_dict)
             append(segment_to_append)
             piece_num += 1
-            picY += length
-        picX += length
-        picY = 0
+            pic_y += length
+        pic_x += length
+        pic_y = 0
     return segments
 
 
-def scoreEntriesForPair(segment1, segment2, score_algorithum):
-    if score_algorithum == ScoreAlgorithum.EUCLIDEAN:
+def scoreEntriesForPair(segment1, segment2, score_algorithm):
+    if score_algorithm == ScoreAlgorithm.EUCLIDEAN:
         return segment1.scoreEntriesEuclidean(segment2)
-    elif score_algorithum == ScoreAlgorithum.MAHALANOBIS:
-        return segment1.scoreEntriesMahalonbis(segment2)
-    elif score_algorithum == ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS:
-        return segment1.scoreEntriesEuclideanAndMahalonbis(segment2)
+    elif score_algorithm == ScoreAlgorithm.MAHALANOBIS:
+        return segment1.scoreEntriesMahalanobis(segment2)
+    elif score_algorithm == ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS:
+        return segment1.scoreEntriesEuclideanAndMahalanobis(segment2)
     return None
 
 
-def scoreEntriesForSegment(segment1, remaining_segments, score_algorithum):
+def scoreEntriesForSegment(segment1, remaining_segments, score_algorithm):
     entries = []
     for segment2 in remaining_segments:
-        entries.extend(scoreEntriesForPair(segment1, segment2, score_algorithum))
+        entries.extend(scoreEntriesForPair(segment1, segment2, score_algorithm))
     return entries
 
 
-def calculateScoresSerial(segment_list, score_algorithum, show_progress=True):
+def calculateScoresSerial(segment_list, score_algorithm, show_progress=True):
     for index, segment1 in enumerate(segment_list):
         if show_progress:
             print("calculating score for segment ", segment1.piece_number)
         for segment2 in segment_list[index+1:]:
-            if score_algorithum == ScoreAlgorithum.EUCLIDEAN:
+            if score_algorithm == ScoreAlgorithm.EUCLIDEAN:
                 segment1.calculateScoreEuclidean(segment2)
-            elif score_algorithum == ScoreAlgorithum.MAHALANOBIS:
-                segment1.calculateScoreMahalonbis(segment2)
-            elif score_algorithum == ScoreAlgorithum.GIST_AND_EUCLDEAN:
+            elif score_algorithm == ScoreAlgorithm.MAHALANOBIS:
+                segment1.calculateScoreMahalanobis(segment2)
+            elif score_algorithm == ScoreAlgorithm.GIST_AND_EUCLIDEAN:
                 segment1.calculateScoreGIST(segment2)
-            elif score_algorithum == ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS:
-                segment1.calculateScoreEuclideanAndMahalonbis(segment2)
+            elif score_algorithm == ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS:
+                segment1.calculateScoreEuclideanAndMahalanobis(segment2)
 
 
 def precomputeScoreEdges(segment_list):
@@ -759,13 +759,13 @@ def buildScorePayloads(segment_list):
     )
 
 
-def calculateScoresThreaded(segment_list, score_algorithum, show_progress=True, max_workers=None):
+def calculateScoresThreaded(segment_list, score_algorithm, show_progress=True, max_workers=None):
     if len(segment_list) < 2:
         return
     if max_workers is None:
         max_workers = min(len(segment_list), os.cpu_count() or 1)
     if max_workers <= 1:
-        calculateScoresSerial(segment_list, score_algorithum, show_progress)
+        calculateScoresSerial(segment_list, score_algorithm, show_progress)
         return
 
     precomputeScoreEdges(segment_list)
@@ -779,20 +779,20 @@ def calculateScoresThreaded(segment_list, score_algorithum, show_progress=True, 
                 scoreEntriesForSegment,
                 segment1,
                 tuple(segment_list[index+1:]),
-                score_algorithum,
+                score_algorithm,
             ))
         for future in as_completed(futures):
             for key, score in future.result():
                 score_dict[key] = score
 
 
-def calculateScoresProcess(segment_list, score_algorithum, show_progress=True, max_workers=None):
+def calculateScoresProcess(segment_list, score_algorithm, show_progress=True, max_workers=None):
     if len(segment_list) < 2:
         return
     if max_workers is None:
         max_workers = min(len(segment_list), os.cpu_count() or 1)
     if max_workers <= 1:
-        calculateScoresSerial(segment_list, score_algorithum, show_progress)
+        calculateScoresSerial(segment_list, score_algorithm, show_progress)
         return
 
     score_payloads = buildScorePayloads(segment_list)
@@ -800,7 +800,7 @@ def calculateScoresProcess(segment_list, score_algorithum, show_progress=True, m
     with ProcessPoolExecutor(
             max_workers=max_workers,
             initializer=initializeScoreWorker,
-            initargs=(score_payloads, score_algorithum)) as executor:
+            initargs=(score_payloads, score_algorithm)) as executor:
         futures = []
         for start, stop in chunkRanges(len(segment_list), max_workers * 4):
             if show_progress:
@@ -813,22 +813,22 @@ def calculateScoresProcess(segment_list, score_algorithum, show_progress=True, m
                 score_dict[key] = score
 
 
-def calculateScores(segment_list, score_algorithum, show_progress=True, max_workers=None, executor_type="thread"):
-    if score_algorithum == ScoreAlgorithum.GIST_AND_EUCLDEAN:
-        calculateScoresSerial(segment_list, score_algorithum, show_progress)
+def calculateScores(segment_list, score_algorithm, show_progress=True, max_workers=None, executor_type="thread"):
+    if score_algorithm == ScoreAlgorithm.GIST_AND_EUCLIDEAN:
+        calculateScoresSerial(segment_list, score_algorithm, show_progress)
     elif executor_type == "serial":
-        calculateScoresSerial(segment_list, score_algorithum, show_progress)
+        calculateScoresSerial(segment_list, score_algorithm, show_progress)
     elif executor_type == "process":
-        calculateScoresProcess(segment_list, score_algorithum, show_progress, max_workers)
+        calculateScoresProcess(segment_list, score_algorithm, show_progress, max_workers)
     elif executor_type == "thread":
-        calculateScoresThreaded(segment_list, score_algorithum, show_progress, max_workers)
+        calculateScoresThreaded(segment_list, score_algorithm, show_progress, max_workers)
     else:
         raise ValueError("executor_type must be 'serial', 'thread', or 'process'")
 
 
-def findBestConnectionKruskal(segment_list, compare_type, boost_priority_of_big_pieces_joining, compareType):
+def findBestConnectionKruskal(segment_list, compare_type, boost_priority_of_big_pieces_joining, compare_mode):
     best_so_far = BestConnection()
-    if compareType == CompareWithOtherSegments.ONLY_BEST:
+    if compare_mode == CompareWithOtherSegments.ONLY_BEST:
         for index, segment1 in enumerate(segment_list):
             for segment2 in segment_list[index+1:]:
                 segment1.best_connection_found_so_far = BestConnection()
@@ -849,12 +849,12 @@ def findBestConnectionKruskal(segment_list, compare_type, boost_priority_of_big_
         return best_so_far
 
 
-def findBestConnectionPrim(segment_list, rootSegment, compare_type):
+def findBestConnectionPrim(segment_list, root_segment, compare_type):
     best_so_far = BestConnection()
     for segment in segment_list:
-        if segment != rootSegment:
-            rootSegment.best_connection_found_so_far = BestConnection()
-            temp = rootSegment.calculateConnectionsPrim(segment)
+        if segment != root_segment:
+            root_segment.best_connection_found_so_far = BestConnection()
+            temp = root_segment.calculateConnectionsPrim(segment)
             if temp.isBetterConnection(best_so_far, compare_type):
                 best_so_far = temp
     return best_so_far
@@ -868,7 +868,7 @@ def findBestRootSegment(segment_list):
 def printPiecesMatrices(segment_list):
     for node in segment_list:
         print(node.binary_connection_matrix)
-        print(node.pic_connection_matix)
+        print(node.pic_connection_matrix)
         print(node.piece_number)
     print('\n\n\n')
 
@@ -880,7 +880,7 @@ def clearDictionaryForRam(my_list, removing):
                 del connection.connections_dict[key]
 
 
-def saveImage(best_connection, piece_size, round, colortype, name_for_round):
+def saveImage(best_connection, piece_size, round_number, color_type, name_for_round):
     pic_locations = best_connection.binary_connection_matrix.nonzero()
     biggestx = max(pic_locations[0])
     biggesty = max(pic_locations[1])
@@ -891,20 +891,20 @@ def saveImage(best_connection, piece_size, round, colortype, name_for_round):
     biggest_dim = sizex if sizex > sizey else sizey
     new_image = zeros((biggest_dim*piece_size, biggest_dim*piece_size, 3))
     for x in range(len(pic_locations[0])):
-        piece_to_assemble = best_connection.pic_connection_matix[pic_locations[0]
+        piece_to_assemble = best_connection.pic_connection_matrix[pic_locations[0]
                                                                  [x], pic_locations[1][x]].pic_matrix
         x1 = (pic_locations[0][x]-smallestx)*piece_size
         y1 = (pic_locations[1][x]-smallesty)*piece_size
         new_image[x1:x1+piece_size, y1:y1+piece_size, :] = piece_to_assemble
-    if colortype == ColorType.LAB:
+    if color_type == ColorType.LAB:
         new_image = color.lab2rgb(new_image)
-    imageName = name_for_round+" round"+str(round)+".png"
-    iio.imwrite(imageName, prepareImageForWrite(new_image))
-    return imageName
+    image_name = name_for_round+" round"+str(round_number)+".png"
+    iio.imwrite(image_name, prepareImageForWrite(new_image))
+    return image_name
 
 
-def normalizeScores(segment_list, scoreType):
-    if scoreType == ScoreAlgorithum.GIST_AND_EUCLDEAN:
+def normalizeScores(segment_list, score_algorithm):
+    if score_algorithm == ScoreAlgorithm.GIST_AND_EUCLIDEAN:
         score_dict = segment_list[0].score_dict
         list1 = []
         list2 = []
@@ -916,13 +916,13 @@ def normalizeScores(segment_list, scoreType):
         min1 = min(list1)
         min2 = min(list2)
         for value in score_dict:
-            colorScore = score_dict[value][0]
-            distScore = score_dict[value][1]
-            colorScoreNormal = (colorScore-min1)/(max1-min1)
-            colorScoreGIST = ((distScore-min2) / (max2-min2)
+            color_score = score_dict[value][0]
+            distance_score = score_dict[value][1]
+            normalized_color_score = (color_score-min1)/(max1-min1)
+            normalized_gist_score = ((distance_score-min2) / (max2-min2)
                               )  # extra weight to GIST
-            score_dict[value] = colorScoreNormal+colorScoreGIST
-    elif scoreType == ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS:
+            score_dict[value] = normalized_color_score+normalized_gist_score
+    elif score_algorithm == ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS:
         score_dict = segment_list[0].score_dict
         list1 = []
         list2 = []
@@ -934,19 +934,19 @@ def normalizeScores(segment_list, scoreType):
         min1 = min(list1)
         min2 = min(list2)
         for value in score_dict:
-            colorScore = score_dict[value][0]
-            distScore = score_dict[value][1]
-            colorScoreMal = (colorScore-min1)/(max1-min1)
-            colorScoreEucl = ((distScore-min2) / (max2-min2)
+            mahalanobis_score = score_dict[value][0]
+            euclidean_score = score_dict[value][1]
+            normalized_mahalanobis_score = (mahalanobis_score-min1)/(max1-min1)
+            normalized_euclidean_score = ((euclidean_score-min2) / (max2-min2)
                               )  # extra weight to GIST
-            score_dict[value] = colorScoreMal+colorScoreEucl            
+            score_dict[value] = normalized_mahalanobis_score+normalized_euclidean_score
 
 
 def createCrossPiece(segment_list):
     root = findBestRootSegment(segment_list)
 
 
-def checkFunctionCacsTheSameOnEachPeice(segment_list, boost_priority_of_big_pieces_joining):
+def checkFunctionCalculatesTheSameOnEachPiece(segment_list, boost_priority_of_big_pieces_joining):
     for segment in segment_list:
         for segment2 in segment_list:
             if segment != segment2:
@@ -1005,25 +1005,25 @@ def connectBestBudsFirst(segment_list, original_size, show_progress=True):
 def joinPieces(best_connection, segment_list, original_size):
     best_connection.stripZeros()
     best_connection.own_segment.binary_connection_matrix = best_connection.binary_connection_matrix
-    best_connection.own_segment.pic_connection_matix = best_connection.pic_connection_matix
-    best_connection.own_segment.myownNumber += original_size
+    best_connection.own_segment.pic_connection_matrix = best_connection.pic_connection_matrix
+    best_connection.own_segment.component_id += original_size
     segment_list.remove(best_connection.join_segment)
 
 
 # TODO  Multiple edge layers.  Maybe corner pixels have some extra say?
 # TODO Maybe have it go in lines? Or at least start off with two lines one horizontal one vertical to build off and stop going out of bounds?
 # TODO maybe combo of kruskal and prims? Divide into blocks? Limit the number of trees? Force to use prims after awhile?
-# TODO do a best budy where each peice thinks the other is the best and get those done FIRST
+# TODO do a best buddy where each piece thinks the other is the best and get those done FIRST
 # TODO Different color spaces
 # TODO Find balance of second best ratio
-# TODO is mal distance the same either way???? Did I get that wrong?
-# TODO combo of Euclidean and MAL?
+# TODO is Mahalanobis distance the same either way???? Did I get that wrong?
+# TODO combo of Euclidean and Mahalanobis?
 # http://chenlab.ece.cornell.edu/people/Andy/publications/Andy_files/Gallagher_cvpr2012_puzzleAssembly.pdf
 # https://jamesmccaffrey.wordpress.com/2017/11/09/example-of-calculating-the-mahalanobis-distance/
 # https://www.python.org/dev/peps/pep-0371/ use this to make it faster
 # https://www.sciencedirect.com/science/article/pii/S131915781830394X gist combo with euclidean
 # https://pdfs.semanticscholar.org/4003/7d131e3365feb9d69912b3c8e8527e9ed2d5.pdf  cycle detection
-# Filter the image?  Gausian blur etc?
+# Filter the image?  Gaussian blur etc?
 def main():
     start_time = time.time()
     picture_file_name = Path(__file__).resolve().with_name("William.png")
@@ -1038,20 +1038,20 @@ def main():
     score_workers = None
     score_executor = "process"
 
-    colorType = ColorType.LAB
-    assemblyType = AssemblyType.KRUSKAL
-    scoreType = ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS
-    compareType = CompareWithOtherSegments.ONLY_BEST
+    color_type = ColorType.LAB
+    assembly_type = AssemblyType.KRUSKAL
+    score_algorithm = ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS
+    compare_type = CompareWithOtherSegments.ONLY_BEST
     name_for_round = "test"
 
-    if colorType == ColorType.LAB:
+    if color_type == ColorType.LAB:
         image = color.rgb2lab(image)
     segment_list = breakUpImage(
-        image, length, save_segments, colorType, scoreType)
+        image, length, save_segments, color_type, score_algorithm)
     calculateScores(
-        segment_list, scoreType, show_print_statements, score_workers, score_executor)
+        segment_list, score_algorithm, show_print_statements, score_workers, score_executor)
 
-    normalizeScores(segment_list, scoreType)
+    normalizeScores(segment_list, score_algorithm)
     elapsed_time_secs = time.time() - start_time
     if show_print_statements:
         print("Calculate scores took: %s secs " % elapsed_time_secs)
@@ -1065,25 +1065,25 @@ def main():
         img = ImageTk.PhotoImage(Image.open(picture_file_name))
         w = tkinter.Label(window, image=img)
     random.shuffle(segment_list)
-    round = 0
+    round_number = 0
     original_size = len(segment_list)
     root = None
     if connect_best_friends_first:
         connectBestBudsFirst(segment_list, original_size, show_print_statements)
-    if assemblyType == AssemblyType.PRIM:
+    if assembly_type == AssemblyType.PRIM:
         root = findBestRootSegment(segment_list)
     while len(segment_list) > 1:
         best_connection = None
-        if assemblyType == AssemblyType.KRUSKAL:
+        if assembly_type == AssemblyType.KRUSKAL:
             best_connection = findBestConnectionKruskal(
-                segment_list, compareType, boost_priority_of_big_pieces_joining, compareType)
-        if assemblyType == AssemblyType.PRIM:
+                segment_list, compare_type, boost_priority_of_big_pieces_joining, compare_type)
+        if assembly_type == AssemblyType.PRIM:
             best_connection = findBestConnectionPrim(
-                segment_list, root, compareType)
+                segment_list, root, compare_type)
         joinPieces(best_connection, segment_list, original_size)
         root = best_connection.own_segment
         if save_assembly_to_disk:
-            image_name = saveImage(best_connection, length, round, colorType, name_for_round)
+            image_name = saveImage(best_connection, length, round_number, color_type, name_for_round)
             if show_building_animation:
                 updated_picture = ImageTk.PhotoImage(Image.open(image_name))
                 w.configure(image=updated_picture)
@@ -1091,9 +1091,9 @@ def main():
                 w.pack(side="bottom", fill="both", expand="no")
                 window.update()
         if show_print_statements == True:
-            print("for round ", round, " i get score of ", best_connection.score, "the ratio for first to second best is ",
+            print("for round ", round_number, " i get score of ", best_connection.score, "the ratio for first to second best is ",
                   best_connection.score/best_connection.second_best_score, " it took ", time.time()-start_time)
-        round += 1
+        round_number += 1
 
     if show_print_statements == True:
         elapsed_time_secs = time.time() - start_time

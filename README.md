@@ -82,9 +82,9 @@ show_building_animation = True
 show_print_statements = True
 score_workers = None
 score_executor = "process"
-colorType = ColorType.LAB
-assemblyType = AssemblyType.KRUSKAL
-scoreType = ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS
+color_type = ColorType.LAB
+assembly_type = AssemblyType.KRUSKAL
+score_algorithm = ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS
 name_for_round = "test"
 ```
 

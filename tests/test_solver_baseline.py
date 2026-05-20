@@ -76,8 +76,8 @@ class BreakUpImageTests(unittest.TestCase):
             image,
             length=2,
             save_segments=False,
-            colortype=solver.ColorType.RGB,
-            score_algorithum=solver.ScoreAlgorithum.EUCLIDEAN,
+            color_type=solver.ColorType.RGB,
+            score_algorithm=solver.ScoreAlgorithm.EUCLIDEAN,
         )
 
         self.assertEqual(4, len(segments))
@@ -96,8 +96,8 @@ class BreakUpImageTests(unittest.TestCase):
                     image,
                     length=2,
                     save_segments=False,
-                    colortype=solver.ColorType.RGB,
-                    score_algorithum=solver.ScoreAlgorithum.EUCLIDEAN,
+                    color_type=solver.ColorType.RGB,
+                    score_algorithm=solver.ScoreAlgorithm.EUCLIDEAN,
                 )
 
     def test_rejects_images_not_evenly_divisible_by_tile_size(self):
@@ -109,8 +109,8 @@ class BreakUpImageTests(unittest.TestCase):
                     image,
                     length=2,
                     save_segments=False,
-                    colortype=solver.ColorType.RGB,
-                    score_algorithum=solver.ScoreAlgorithum.EUCLIDEAN,
+                    color_type=solver.ColorType.RGB,
+                    score_algorithm=solver.ScoreAlgorithm.EUCLIDEAN,
                 )
 
 
@@ -123,7 +123,7 @@ class ScoreTests(unittest.TestCase):
             max_width=2,
             max_height=2,
             piece_number=piece_number,
-            myownNumber=piece_number,
+            component_id=piece_number,
             score_dict=score_dict,
             gist=None,
             connections_dict={},
@@ -229,7 +229,7 @@ class ScoreTests(unittest.TestCase):
             score_dict=score_dict,
         )
 
-        first.calculateScoreMahalonbis(second)
+        first.calculateScoreMahalanobis(second)
 
         right_score = score_dict[1, solver.JoinDirection.RIGHT, 2]
         reciprocal_left_score = score_dict[2, solver.JoinDirection.LEFT, 1]
@@ -256,7 +256,7 @@ class ScoreTests(unittest.TestCase):
             score_dict=score_dict,
         )
 
-        first.calculateScoreEuclideanAndMahalonbis(second)
+        first.calculateScoreEuclideanAndMahalanobis(second)
 
         expected_right_score = (
             first.mahalanobisDistance(
@@ -291,7 +291,7 @@ class ScoreTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as output:
             solver.calculateScores(
                 [first, second],
-                solver.ScoreAlgorithum.EUCLIDEAN,
+                solver.ScoreAlgorithm.EUCLIDEAN,
                 show_progress=False,
             )
 
@@ -316,14 +316,14 @@ class ScoreTests(unittest.TestCase):
 
         solver.calculateScores(
             serial_segments,
-            solver.ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS,
+            solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
             show_progress=False,
             max_workers=1,
             executor_type="serial",
         )
         solver.calculateScores(
             threaded_segments,
-            solver.ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS,
+            solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
             show_progress=False,
             max_workers=2,
             executor_type="thread",
@@ -349,7 +349,7 @@ class ScoreTests(unittest.TestCase):
 
         solver.calculateScores(
             serial_segments,
-            solver.ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS,
+            solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
             show_progress=False,
             max_workers=1,
             executor_type="serial",
@@ -357,7 +357,7 @@ class ScoreTests(unittest.TestCase):
         try:
             solver.calculateScores(
                 process_segments,
-                solver.ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS,
+                solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
                 show_progress=False,
                 max_workers=2,
                 executor_type="process",
@@ -379,7 +379,7 @@ class ScoreTests(unittest.TestCase):
 
         solver.normalizeScores(
             [segment],
-            solver.ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS,
+            solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
         )
 
         self.assertEqual(0.0, segment.score_dict[("low",)])
@@ -413,7 +413,7 @@ class ConnectionTests(unittest.TestCase):
             max_width=2,
             max_height=2,
             piece_number=1,
-            myownNumber=1,
+            component_id=1,
             score_dict=score_dict,
             gist=None,
             connections_dict={},
@@ -423,7 +423,7 @@ class ConnectionTests(unittest.TestCase):
             max_width=2,
             max_height=2,
             piece_number=2,
-            myownNumber=2,
+            component_id=2,
             score_dict=score_dict,
             gist=None,
             connections_dict={},
@@ -487,7 +487,7 @@ class ConnectionTests(unittest.TestCase):
 
     def test_best_connection_strips_empty_rows_and_columns(self):
         connection = solver.BestConnection(
-            pic_connection_matix=np.asarray(
+            pic_connection_matrix=np.asarray(
                 [
                     [0, 0, 0],
                     [0, "piece", 0],
@@ -506,9 +506,9 @@ class ConnectionTests(unittest.TestCase):
 
         connection.stripZeros()
 
-        self.assertEqual((1, 1), connection.pic_connection_matix.shape)
+        self.assertEqual((1, 1), connection.pic_connection_matrix.shape)
         self.assertEqual((1, 1), connection.binary_connection_matrix.shape)
-        self.assertEqual("piece", connection.pic_connection_matix[0, 0])
+        self.assertEqual("piece", connection.pic_connection_matrix[0, 0])
         self.assertEqual(1, connection.binary_connection_matrix[0, 0])
 
     def test_join_pieces_updates_owner_and_removes_joined_segment(self):
@@ -518,7 +518,7 @@ class ConnectionTests(unittest.TestCase):
             max_width=2,
             max_height=2,
             piece_number=1,
-            myownNumber=1,
+            component_id=1,
             score_dict=score_dict,
             gist=None,
             connections_dict={},
@@ -528,7 +528,7 @@ class ConnectionTests(unittest.TestCase):
             max_width=2,
             max_height=2,
             piece_number=2,
-            myownNumber=2,
+            component_id=2,
             score_dict=score_dict,
             gist=None,
             connections_dict={},
@@ -536,7 +536,7 @@ class ConnectionTests(unittest.TestCase):
         connection = solver.BestConnection(
             own_segment=first,
             join_segment=second,
-            pic_connection_matix=np.asarray([[first, second]], dtype=object),
+            pic_connection_matrix=np.asarray([[first, second]], dtype=object),
             binary_connection_matrix=np.asarray([[1, 1]]),
         )
         segments = [first, second]
@@ -544,10 +544,10 @@ class ConnectionTests(unittest.TestCase):
         solver.joinPieces(connection, segments, original_size=2)
 
         self.assertEqual([first], segments)
-        self.assertEqual(3, first.myownNumber)
+        self.assertEqual(3, first.component_id)
         np.testing.assert_array_equal(np.asarray([[1, 1]]), first.binary_connection_matrix)
-        self.assertIs(first.pic_connection_matix[0, 0], first)
-        self.assertIs(first.pic_connection_matix[0, 1], second)
+        self.assertIs(first.pic_connection_matrix[0, 0], first)
+        self.assertIs(first.pic_connection_matrix[0, 1], second)
 
 
 if __name__ == "__main__":

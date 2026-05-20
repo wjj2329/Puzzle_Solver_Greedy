@@ -21,8 +21,8 @@ def build_segments(image_size, piece_size, seed):
         image,
         piece_size,
         save_segments=False,
-        colortype=Solver.ColorType.RGB,
-        score_algorithum=Solver.ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS,
+        color_type=Solver.ColorType.RGB,
+        score_algorithm=Solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
     )
 
 
@@ -32,7 +32,7 @@ def time_score_run(image_size, piece_size, seed, executor_type, workers):
     with contextlib.redirect_stdout(io.StringIO()):
         Solver.calculateScores(
             segments,
-            Solver.ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS,
+            Solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
             show_progress=False,
             max_workers=workers,
             executor_type=executor_type,
