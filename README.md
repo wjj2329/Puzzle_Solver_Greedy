@@ -97,7 +97,7 @@ Generated tile and assembly images are written to the repo-level `output_image/`
 To benchmark score-calculation backends on generated image data:
 
 ```bash
-python scripts/benchmark_scores.py --image-size 960 --piece-size 30 --runs serial:1 process:4 process:8
+python benchmarks/benchmark_scores.py --image-size 960 --piece-size 30 --runs serial:1 process:4 process:8
 ```
 
 ## Testing
