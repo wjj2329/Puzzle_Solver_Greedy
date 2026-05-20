@@ -1,6 +1,5 @@
 import contextlib
 import io
-import importlib.util
 import math
 import sys
 import unittest
@@ -13,18 +12,16 @@ except ModuleNotFoundError as exc:
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOLVER_PATH = ROOT / "Python3" / "Solver.py"
+SOLVER_DIR = ROOT / "Python3"
 
 
 def load_solver():
-    spec = importlib.util.spec_from_file_location("solver", SOLVER_PATH)
-    solver = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = solver
+    sys.path.insert(0, str(SOLVER_DIR))
     try:
-        spec.loader.exec_module(solver)
+        import Solver
     except ModuleNotFoundError as exc:
         raise unittest.SkipTest("Install requirements.txt to run solver tests") from exc
-    return solver
+    return Solver
 
 
 solver = load_solver()
@@ -300,6 +297,75 @@ class ScoreTests(unittest.TestCase):
 
         self.assertEqual("", output.getvalue())
         self.assertIn((1, solver.JoinDirection.RIGHT, 2), score_dict)
+
+    def test_threaded_calculate_scores_matches_serial_results(self):
+        def make_segments(score_dict):
+            return [
+                self.make_segment(
+                    np.arange(27).reshape((3, 3, 3)) + offset,
+                    piece_number=index,
+                    score_dict=score_dict,
+                )
+                for index, offset in enumerate([0, 7, 19, 31], start=1)
+            ]
+
+        serial_score_dict = {}
+        threaded_score_dict = {}
+        serial_segments = make_segments(serial_score_dict)
+        threaded_segments = make_segments(threaded_score_dict)
+
+        solver.calculateScores(
+            serial_segments,
+            solver.ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS,
+            show_progress=False,
+            max_workers=1,
+            executor_type="serial",
+        )
+        solver.calculateScores(
+            threaded_segments,
+            solver.ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS,
+            show_progress=False,
+            max_workers=2,
+            executor_type="thread",
+        )
+
+        self.assertEqual(serial_score_dict, threaded_score_dict)
+
+    def test_process_calculate_scores_matches_serial_results(self):
+        def make_segments(score_dict):
+            return [
+                self.make_segment(
+                    np.arange(27).reshape((3, 3, 3)) + offset,
+                    piece_number=index,
+                    score_dict=score_dict,
+                )
+                for index, offset in enumerate([0, 7, 19, 31], start=1)
+            ]
+
+        serial_score_dict = {}
+        process_score_dict = {}
+        serial_segments = make_segments(serial_score_dict)
+        process_segments = make_segments(process_score_dict)
+
+        solver.calculateScores(
+            serial_segments,
+            solver.ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS,
+            show_progress=False,
+            max_workers=1,
+            executor_type="serial",
+        )
+        try:
+            solver.calculateScores(
+                process_segments,
+                solver.ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS,
+                show_progress=False,
+                max_workers=2,
+                executor_type="process",
+            )
+        except PermissionError as exc:
+            raise unittest.SkipTest("ProcessPoolExecutor is unavailable") from exc
+
+        self.assertEqual(serial_score_dict, process_score_dict)
 
     def test_combined_score_normalization_preserves_relative_baseline(self):
         segment = self.make_segment(np.zeros((2, 2, 3)), piece_number=1)

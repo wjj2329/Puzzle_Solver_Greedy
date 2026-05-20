@@ -1,8 +1,10 @@
 import argparse
+import os
 import numpy as np
 import random
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from copy import copy
 from enum import Enum
 from pathlib import Path
@@ -22,6 +24,21 @@ class JoinDirection(Enum):
     DOWN = 2
     LEFT = 3
     RIGHT = 4
+
+
+OPPOSITE_DIRECTIONS = {
+    JoinDirection.UP: JoinDirection.DOWN,
+    JoinDirection.DOWN: JoinDirection.UP,
+    JoinDirection.LEFT: JoinDirection.RIGHT,
+    JoinDirection.RIGHT: JoinDirection.LEFT,
+}
+
+JOIN_EDGE_PAIRS = [
+    (JoinDirection.UP, JoinDirection.DOWN),
+    (JoinDirection.DOWN, JoinDirection.UP),
+    (JoinDirection.LEFT, JoinDirection.RIGHT),
+    (JoinDirection.RIGHT, JoinDirection.LEFT),
+]
 
 
 class CompareWithOtherSegments(Enum):
@@ -54,6 +71,17 @@ class ScoreEdge:
         self.inverse_covariance = np.linalg.pinv(np.cov(edge.T))
 
 
+class ScorePayload:
+    def __init__(self, piece_number, own_edges, compare_edges):
+        self.piece_number = piece_number
+        self.own_edges = own_edges
+        self.compare_edges = compare_edges
+
+
+_SCORE_PAYLOADS = None
+_SCORE_ALGORITHM = None
+
+
 def prepareImageForWrite(image):
     image = np.asarray(image)
     if np.issubdtype(image.dtype, np.floating):
@@ -61,6 +89,110 @@ def prepareImageForWrite(image):
             image = image * 255
         image = np.clip(image, 0, 255).round().astype(np.uint8)
     return image
+
+
+def euclideanDistance(a, b):
+    diff = np.asarray(a) - np.asarray(b)
+    diff = diff.reshape(diff.shape[0], -1)
+    return float(np.linalg.norm(diff, axis=1).sum())
+
+
+def mahalanobisEdgeDistance(own_edge, compare_edge):
+    matrix = (own_edge.edge - compare_edge.edge) - own_edge.average_delta
+    matrix2 = (compare_edge.edge - own_edge.edge) - compare_edge.average_delta
+
+    scores = np.einsum(
+        "ij,jk,ik->i", matrix, compare_edge.inverse_covariance, matrix)
+    scores2 = np.einsum(
+        "ij,jk,ik->i", matrix2, own_edge.inverse_covariance, matrix2)
+    return float(np.sqrt(np.abs(scores)).sum() + np.sqrt(np.abs(scores2)).sum())
+
+
+def reciprocalScoreEntries(own_number, join_number, scores_by_direction):
+    entries = []
+    for direction, score in scores_by_direction:
+        entries.append(((own_number, direction, join_number), score))
+        entries.append(((join_number, OPPOSITE_DIRECTIONS[direction], own_number), score))
+    return entries
+
+
+def scorePayloadPair(segment1, segment2, score_algorithum):
+    own_edges = segment1.own_edges
+    compare_edges = segment2.compare_edges
+    if score_algorithum == ScoreAlgorithum.EUCLIDEAN:
+        scores = [
+            (
+                own_direction,
+                euclideanDistance(
+                    own_edges[own_direction].edge,
+                    compare_edges[compare_direction].edge,
+                ),
+            )
+            for own_direction, compare_direction in JOIN_EDGE_PAIRS
+        ]
+    elif score_algorithum == ScoreAlgorithum.MAHALANOBIS:
+        scores = [
+            (
+                own_direction,
+                mahalanobisEdgeDistance(
+                    own_edges[own_direction],
+                    compare_edges[compare_direction],
+                ),
+            )
+            for own_direction, compare_direction in JOIN_EDGE_PAIRS
+        ]
+    elif score_algorithum == ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS:
+        scores = [
+            (
+                own_direction,
+                (
+                    mahalanobisEdgeDistance(
+                        own_edges[own_direction],
+                        compare_edges[compare_direction],
+                    ),
+                    euclideanDistance(
+                        own_edges[own_direction].edge,
+                        compare_edges[compare_direction].edge,
+                    ),
+                ),
+            )
+            for own_direction, compare_direction in JOIN_EDGE_PAIRS
+        ]
+    else:
+        return None
+    return reciprocalScoreEntries(segment1.piece_number, segment2.piece_number, scores)
+
+
+def initializeScoreWorker(score_payloads, score_algorithum):
+    global _SCORE_PAYLOADS, _SCORE_ALGORITHM
+    _SCORE_PAYLOADS = score_payloads
+    _SCORE_ALGORITHM = score_algorithum
+
+
+def scoreEntriesForPayloadIndex(index):
+    entries = []
+    segment1 = _SCORE_PAYLOADS[index]
+    for segment2 in _SCORE_PAYLOADS[index+1:]:
+        entries.extend(scorePayloadPair(segment1, segment2, _SCORE_ALGORITHM))
+    return entries
+
+
+def scoreEntriesForPayloadRange(start, stop):
+    entries = []
+    for index in range(start, stop):
+        entries.extend(scoreEntriesForPayloadIndex(index))
+    return entries
+
+
+def chunkRanges(length, max_chunks):
+    if length <= 0:
+        return []
+    chunk_count = min(length, max_chunks)
+    chunk_size = (length + chunk_count - 1) // chunk_count
+    return [
+        (start, min(start + chunk_size, length))
+        for start in range(0, length, chunk_size)
+    ]
 
 
 class BestConnection:
@@ -136,9 +268,7 @@ class Segment:
             return other
 
     def euclideanDistance(self, a, b):
-        diff = np.asarray(a) - np.asarray(b)
-        diff = diff.reshape(diff.shape[0], -1)
-        return float(np.linalg.norm(diff, axis=1).sum())
+        return euclideanDistance(a, b)
 
     def buildScoreEdges(self, pic_matrix):
         return {
@@ -158,6 +288,74 @@ class Segment:
             self._compare_score_edges = self.buildScoreEdges(self.pic_matrix)
         return self._compare_score_edges
 
+    def reciprocalScoreEntries(self, segment, scores_by_direction):
+        return reciprocalScoreEntries(
+            self.piece_number,
+            segment.piece_number,
+            scores_by_direction,
+        )
+
+    def scoreEntriesEuclidean(self, segment):
+        own_edges = self.ownScoreEdges()
+        compare_edges = segment.compareScoreEdges()
+        return self.reciprocalScoreEntries(
+            segment,
+            [
+                (
+                    own_direction,
+                    self.euclideanDistance(
+                        own_edges[own_direction].edge,
+                        compare_edges[compare_direction].edge,
+                    ),
+                )
+                for own_direction, compare_direction in JOIN_EDGE_PAIRS
+            ],
+        )
+
+    def scoreEntriesMahalonbis(self, segment):
+        own_edges = self.ownScoreEdges()
+        compare_edges = segment.compareScoreEdges()
+        return self.reciprocalScoreEntries(
+            segment,
+            [
+                (
+                    own_direction,
+                    self.mahalanobisEdgeDistance(
+                        own_edges[own_direction],
+                        compare_edges[compare_direction],
+                    ),
+                )
+                for own_direction, compare_direction in JOIN_EDGE_PAIRS
+            ],
+        )
+
+    def scoreEntriesEuclideanAndMahalonbis(self, segment):
+        own_edges = self.ownScoreEdges()
+        compare_edges = segment.compareScoreEdges()
+        return self.reciprocalScoreEntries(
+            segment,
+            [
+                (
+                    own_direction,
+                    (
+                        self.mahalanobisEdgeDistance(
+                            own_edges[own_direction],
+                            compare_edges[compare_direction],
+                        ),
+                        self.euclideanDistance(
+                            own_edges[own_direction].edge,
+                            compare_edges[compare_direction].edge,
+                        ),
+                    ),
+                )
+                for own_direction, compare_direction in JOIN_EDGE_PAIRS
+            ],
+        )
+
+    def applyScoreEntries(self, entries):
+        for key, score in entries:
+            self.score_dict[key] = score
+
     def gistDistance(self, a, b, segment):
         colorScore = self.euclideanDistance(a, b)
         gistScore = self.euclideanDistance(
@@ -168,44 +366,10 @@ class Segment:
         return self.mahalanobisEdgeDistance(ScoreEdge(a, a2), ScoreEdge(z, z2))
 
     def mahalanobisEdgeDistance(self, own_edge, compare_edge):
-        matrix = (own_edge.edge - compare_edge.edge) - own_edge.average_delta
-        matrix2 = (compare_edge.edge - own_edge.edge) - compare_edge.average_delta
-
-        scores = np.einsum(
-            "ij,jk,ik->i", matrix, compare_edge.inverse_covariance, matrix)
-        scores2 = np.einsum(
-            "ij,jk,ik->i", matrix2, own_edge.inverse_covariance, matrix2)
-        return float(np.sqrt(np.abs(scores)).sum() + np.sqrt(np.abs(scores2)).sum())
+        return mahalanobisEdgeDistance(own_edge, compare_edge)
 
     def calculateScoreMahalonbis(self, segment):
-        own_edges = self.ownScoreEdges()
-        compare_edges = segment.compareScoreEdges()
-        mahalanobisDistance = self.mahalanobisEdgeDistance
-        score_dict = self.score_dict
-
-        own_number = self.piece_number
-        join_number = segment.piece_number
-        score_dict[own_number, JoinDirection.UP,
-                   join_number] = mahalanobisDistance(own_edges[JoinDirection.UP], compare_edges[JoinDirection.DOWN])
-        score_dict[own_number, JoinDirection.DOWN,
-                   join_number] = mahalanobisDistance(own_edges[JoinDirection.DOWN], compare_edges[JoinDirection.UP])
-        score_dict[own_number, JoinDirection.LEFT,
-                   join_number] = mahalanobisDistance(own_edges[JoinDirection.LEFT], compare_edges[JoinDirection.RIGHT])
-        score_dict[own_number, JoinDirection.RIGHT,
-                   join_number] = mahalanobisDistance(own_edges[JoinDirection.RIGHT], compare_edges[JoinDirection.LEFT])
-
-        score_dict[join_number, JoinDirection.DOWN,
-                   own_number] = score_dict[own_number, JoinDirection.UP,
-                                            join_number]
-        score_dict[join_number, JoinDirection.UP,
-                   own_number] = score_dict[own_number, JoinDirection.DOWN,
-                                            join_number]
-        score_dict[join_number, JoinDirection.RIGHT,
-                   own_number] = score_dict[own_number, JoinDirection.LEFT,
-                                            join_number]
-        score_dict[join_number, JoinDirection.LEFT,
-                   own_number] = score_dict[own_number, JoinDirection.RIGHT,
-                                            join_number]
+        self.applyScoreEntries(self.scoreEntriesMahalonbis(segment))
 
     def calculateScoreGIST(self, segment):  # this doesn't work :(
         size = segment.pic_matrix.shape[0]
@@ -249,66 +413,10 @@ class Segment:
                                             join_number]
 
     def calculateScoreEuclidean(self, segment):
-        score_dict = self.score_dict
-        euclideanDistance = self.euclideanDistance
-
-        own_edges = self.ownScoreEdges()
-        compare_edges = segment.compareScoreEdges()
-
-        own_number = self.piece_number
-        join_number = segment.piece_number
-        score_dict[own_number, JoinDirection.UP,
-                   join_number] = euclideanDistance(own_edges[JoinDirection.UP].edge, compare_edges[JoinDirection.DOWN].edge)
-        score_dict[own_number, JoinDirection.DOWN,
-                   join_number] = euclideanDistance(own_edges[JoinDirection.DOWN].edge, compare_edges[JoinDirection.UP].edge)
-        score_dict[own_number, JoinDirection.LEFT,
-                   join_number] = euclideanDistance(own_edges[JoinDirection.LEFT].edge, compare_edges[JoinDirection.RIGHT].edge)
-        score_dict[own_number, JoinDirection.RIGHT,
-                   join_number] = euclideanDistance(own_edges[JoinDirection.RIGHT].edge, compare_edges[JoinDirection.LEFT].edge)
-
-        score_dict[join_number, JoinDirection.DOWN,
-                   own_number] = score_dict[own_number, JoinDirection.UP,
-                                            join_number]
-        score_dict[join_number, JoinDirection.UP,
-                   own_number] = score_dict[own_number, JoinDirection.DOWN,
-                                            join_number]
-        score_dict[join_number, JoinDirection.RIGHT,
-                   own_number] = score_dict[own_number, JoinDirection.LEFT,
-                                            join_number]
-        score_dict[join_number, JoinDirection.LEFT,
-                   own_number] = score_dict[own_number, JoinDirection.RIGHT,
-                                            join_number]
+        self.applyScoreEntries(self.scoreEntriesEuclidean(segment))
 
     def calculateScoreEuclideanAndMahalonbis(self, segment):
-        own_edges = self.ownScoreEdges()
-        compare_edges = segment.compareScoreEdges()
-        mahalanobisDistance = self.mahalanobisEdgeDistance
-        euclideanDistance = self.euclideanDistance
-        score_dict = self.score_dict
-
-        own_number = self.piece_number
-        join_number = segment.piece_number
-        score_dict[own_number, JoinDirection.UP,
-                   join_number] = (mahalanobisDistance(own_edges[JoinDirection.UP], compare_edges[JoinDirection.DOWN]), euclideanDistance(own_edges[JoinDirection.UP].edge, compare_edges[JoinDirection.DOWN].edge))
-        score_dict[own_number, JoinDirection.DOWN,
-                   join_number] = (mahalanobisDistance(own_edges[JoinDirection.DOWN], compare_edges[JoinDirection.UP]), euclideanDistance(own_edges[JoinDirection.DOWN].edge, compare_edges[JoinDirection.UP].edge))
-        score_dict[own_number, JoinDirection.LEFT,
-                   join_number] = (mahalanobisDistance(own_edges[JoinDirection.LEFT], compare_edges[JoinDirection.RIGHT]), euclideanDistance(own_edges[JoinDirection.LEFT].edge, compare_edges[JoinDirection.RIGHT].edge))
-        score_dict[own_number, JoinDirection.RIGHT,
-                   join_number] = (mahalanobisDistance(own_edges[JoinDirection.RIGHT], compare_edges[JoinDirection.LEFT]), euclideanDistance(own_edges[JoinDirection.RIGHT].edge, compare_edges[JoinDirection.LEFT].edge))
-
-        score_dict[join_number, JoinDirection.DOWN,
-                   own_number] = score_dict[own_number, JoinDirection.UP,
-                                            join_number]
-        score_dict[join_number, JoinDirection.UP,
-                   own_number] = score_dict[own_number, JoinDirection.DOWN,
-                                            join_number]
-        score_dict[join_number, JoinDirection.RIGHT,
-                   own_number] = score_dict[own_number, JoinDirection.LEFT,
-                                            join_number]
-        score_dict[join_number, JoinDirection.LEFT,
-                   own_number] = score_dict[own_number, JoinDirection.RIGHT,
-                                            join_number]
+        self.applyScoreEntries(self.scoreEntriesEuclideanAndMahalonbis(segment))
 
     def checkforcompatibility(self, booleanarray, max_height, max_width):
         non_zero_values = nonzero(booleanarray)
@@ -601,10 +709,27 @@ def breakUpImage(image, length, save_segments, colortype, score_algorithum):
     return segments
 
 
-def calculateScores(segment_list, score_algorithum, show_progress=True):
+def scoreEntriesForPair(segment1, segment2, score_algorithum):
+    if score_algorithum == ScoreAlgorithum.EUCLIDEAN:
+        return segment1.scoreEntriesEuclidean(segment2)
+    elif score_algorithum == ScoreAlgorithum.MAHALANOBIS:
+        return segment1.scoreEntriesMahalonbis(segment2)
+    elif score_algorithum == ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS:
+        return segment1.scoreEntriesEuclideanAndMahalonbis(segment2)
+    return None
+
+
+def scoreEntriesForSegment(segment1, remaining_segments, score_algorithum):
+    entries = []
+    for segment2 in remaining_segments:
+        entries.extend(scoreEntriesForPair(segment1, segment2, score_algorithum))
+    return entries
+
+
+def calculateScoresSerial(segment_list, score_algorithum, show_progress=True):
     for index, segment1 in enumerate(segment_list):
         if show_progress:
-            print("calcuating score for segment ", segment1.piece_number)
+            print("calculating score for segment ", segment1.piece_number)
         for segment2 in segment_list[index+1:]:
             if score_algorithum == ScoreAlgorithum.EUCLIDEAN:
                 segment1.calculateScoreEuclidean(segment2)
@@ -614,6 +739,91 @@ def calculateScores(segment_list, score_algorithum, show_progress=True):
                 segment1.calculateScoreGIST(segment2)
             elif score_algorithum == ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS:
                 segment1.calculateScoreEuclideanAndMahalonbis(segment2)
+
+
+def precomputeScoreEdges(segment_list):
+    for segment in segment_list:
+        segment.ownScoreEdges()
+        segment.compareScoreEdges()
+
+
+def buildScorePayloads(segment_list):
+    precomputeScoreEdges(segment_list)
+    return tuple(
+        ScorePayload(
+            segment.piece_number,
+            segment.ownScoreEdges(),
+            segment.compareScoreEdges(),
+        )
+        for segment in segment_list
+    )
+
+
+def calculateScoresThreaded(segment_list, score_algorithum, show_progress=True, max_workers=None):
+    if len(segment_list) < 2:
+        return
+    if max_workers is None:
+        max_workers = min(len(segment_list), os.cpu_count() or 1)
+    if max_workers <= 1:
+        calculateScoresSerial(segment_list, score_algorithum, show_progress)
+        return
+
+    precomputeScoreEdges(segment_list)
+    score_dict = segment_list[0].score_dict
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = []
+        for index, segment1 in enumerate(segment_list):
+            if show_progress:
+                print("calculating score for segment ", segment1.piece_number)
+            futures.append(executor.submit(
+                scoreEntriesForSegment,
+                segment1,
+                tuple(segment_list[index+1:]),
+                score_algorithum,
+            ))
+        for future in as_completed(futures):
+            for key, score in future.result():
+                score_dict[key] = score
+
+
+def calculateScoresProcess(segment_list, score_algorithum, show_progress=True, max_workers=None):
+    if len(segment_list) < 2:
+        return
+    if max_workers is None:
+        max_workers = min(len(segment_list), os.cpu_count() or 1)
+    if max_workers <= 1:
+        calculateScoresSerial(segment_list, score_algorithum, show_progress)
+        return
+
+    score_payloads = buildScorePayloads(segment_list)
+    score_dict = segment_list[0].score_dict
+    with ProcessPoolExecutor(
+            max_workers=max_workers,
+            initializer=initializeScoreWorker,
+            initargs=(score_payloads, score_algorithum)) as executor:
+        futures = []
+        for start, stop in chunkRanges(len(segment_list), max_workers * 4):
+            if show_progress:
+                print("calculating score for segments ",
+                      segment_list[start].piece_number, " through ",
+                      segment_list[stop - 1].piece_number)
+            futures.append(executor.submit(scoreEntriesForPayloadRange, start, stop))
+        for future in as_completed(futures):
+            for key, score in future.result():
+                score_dict[key] = score
+
+
+def calculateScores(segment_list, score_algorithum, show_progress=True, max_workers=None, executor_type="thread"):
+    if score_algorithum == ScoreAlgorithum.GIST_AND_EUCLDEAN:
+        calculateScoresSerial(segment_list, score_algorithum, show_progress)
+    elif executor_type == "serial":
+        calculateScoresSerial(segment_list, score_algorithum, show_progress)
+    elif executor_type == "process":
+        calculateScoresProcess(segment_list, score_algorithum, show_progress, max_workers)
+    elif executor_type == "thread":
+        calculateScoresThreaded(segment_list, score_algorithum, show_progress, max_workers)
+    else:
+        raise ValueError("executor_type must be 'serial', 'thread', or 'process'")
 
 
 def findBestConnectionKruskal(segment_list, compare_type, boost_priority_of_big_pieces_joining, compareType):
@@ -825,6 +1035,8 @@ def main():
     show_print_statements = True
     boost_priority_of_big_pieces_joining = False
     connect_best_friends_first = True
+    score_workers = None
+    score_executor = "process"
 
     colorType = ColorType.LAB
     assemblyType = AssemblyType.KRUSKAL
@@ -836,7 +1048,8 @@ def main():
         image = color.rgb2lab(image)
     segment_list = breakUpImage(
         image, length, save_segments, colorType, scoreType)
-    calculateScores(segment_list, scoreType, show_print_statements)
+    calculateScores(
+        segment_list, scoreType, show_print_statements, score_workers, score_executor)
 
     normalizeScores(segment_list, scoreType)
     elapsed_time_secs = time.time() - start_time

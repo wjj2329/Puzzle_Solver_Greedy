@@ -74,15 +74,26 @@ The solver is currently configured by editing variables inside `main()` in `Pyth
 Important defaults:
 
 ```python
-picture_file_name = "william.png"
+picture_file_name = Path(__file__).resolve().with_name("William.png")
 length = 30
 save_segments = True
 save_assembly_to_disk = True
 show_building_animation = True
+show_print_statements = True
+score_workers = None
+score_executor = "process"
 colorType = ColorType.LAB
 assemblyType = AssemblyType.KRUSKAL
 scoreType = ScoreAlgorithum.EUCLIDEAN_AND_MAHALANOBIS
 name_for_round = "test"
+```
+
+`score_workers = None` uses the available CPU count for score calculation. Set it to `1` to force serial scoring. `score_executor` can be `"serial"`, `"thread"`, or `"process"`. The default `"process"` backend gives true multi-core parallelism for the score-calculation phase.
+
+To benchmark score-calculation backends on generated image data:
+
+```bash
+python scripts/benchmark_scores.py --image-size 960 --piece-size 30 --runs serial:1 process:4 process:8
 ```
 
 ## Testing
