@@ -648,5 +648,70 @@ class ConnectionTests(unittest.TestCase):
         self.assertIs(first.pic_connection_matrix[0, 1], second)
 
 
+class KruskalAssemblyTests(unittest.TestCase):
+    def make_segments(self):
+        rng = np.random.default_rng(42)
+        image = rng.integers(0, 255, size=(12, 12, 3), dtype=np.uint8)
+        segments = solver.breakUpImage(
+            image,
+            length=4,
+            save_segments=False,
+            color_type=solver.ColorType.RGB,
+            score_algorithm=solver.ScoreAlgorithm.EUCLIDEAN,
+        )
+        solver.calculateScores(
+            segments,
+            solver.ScoreAlgorithm.EUCLIDEAN,
+            show_progress=False,
+            max_workers=1,
+            executor_type="serial",
+        )
+        return segments, len(segments)
+
+    def scan_assembly_history(self, segments, original_size):
+        history = []
+        while len(segments) > 1:
+            best_connection = solver.findBestConnectionKruskal(
+                segments,
+                solver.CompareWithOtherSegments.ONLY_BEST,
+                boost_priority_of_big_pieces_joining=False,
+                compare_mode=solver.CompareWithOtherSegments.ONLY_BEST,
+            )
+            if best_connection.pic_connection_matrix is None:
+                break
+            history.append((
+                best_connection.score,
+                best_connection.own_segment.piece_number,
+                best_connection.join_segment.piece_number,
+            ))
+            solver.joinPieces(best_connection, segments, original_size)
+        return history
+
+    def test_priority_queue_matches_full_scan_assembly(self):
+        scan_segments, scan_original_size = self.make_segments()
+        queue_segments, queue_original_size = self.make_segments()
+
+        scan_history = self.scan_assembly_history(
+            scan_segments, scan_original_size)
+        queue_history = []
+
+        def record_join(best_connection, round_number):
+            queue_history.append((
+                best_connection.score,
+                best_connection.own_segment.piece_number,
+                best_connection.join_segment.piece_number,
+            ))
+
+        queue_rounds = solver.assembleKruskalWithPriorityQueue(
+            queue_segments,
+            queue_original_size,
+            on_join=record_join,
+        )
+
+        self.assertEqual(scan_history, queue_history)
+        self.assertEqual(len(scan_history), queue_rounds)
+        self.assertEqual(len(scan_segments), len(queue_segments))
+
+
 if __name__ == "__main__":
     unittest.main()

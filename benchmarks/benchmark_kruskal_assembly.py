@@ -78,6 +78,7 @@ def time_kruskal_assembly_run(
         image_mode,
         score_algorithm,
         run_best_buddy,
+        strategy,
         boost_priority_of_big_pieces_joining):
     segments, original_size = build_prepared_segments(
         image_size,
@@ -91,17 +92,24 @@ def time_kruskal_assembly_run(
     rounds = 0
     started = time.perf_counter()
     with contextlib.redirect_stdout(io.StringIO()):
-        while len(segments) > 1:
-            best_connection = Solver.findBestConnectionKruskal(
+        if strategy == "queue":
+            rounds = Solver.assembleKruskalWithPriorityQueue(
                 segments,
-                Solver.CompareWithOtherSegments.ONLY_BEST,
+                original_size,
                 boost_priority_of_big_pieces_joining,
-                Solver.CompareWithOtherSegments.ONLY_BEST,
             )
-            if best_connection.pic_connection_matrix is None:
-                break
-            Solver.joinPieces(best_connection, segments, original_size)
-            rounds += 1
+        else:
+            while len(segments) > 1:
+                best_connection = Solver.findBestConnectionKruskal(
+                    segments,
+                    Solver.CompareWithOtherSegments.ONLY_BEST,
+                    boost_priority_of_big_pieces_joining,
+                    Solver.CompareWithOtherSegments.ONLY_BEST,
+                )
+                if best_connection.pic_connection_matrix is None:
+                    break
+                Solver.joinPieces(best_connection, segments, original_size)
+                rounds += 1
     elapsed = time.perf_counter() - started
     return elapsed, original_size, starting_components, rounds, len(segments)
 
@@ -124,6 +132,13 @@ def main():
     parser.add_argument("--piece-size", type=int, default=30)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--repeat", type=int, default=1)
+    parser.add_argument(
+        "--strategy",
+        choices=("scan", "queue", "both"),
+        default="both",
+        help="Assembly strategy to time. scan is the old full-scan loop; "
+             "queue is the priority-queue implementation.",
+    )
     parser.add_argument(
         "--image-mode",
         choices=("gradient", "random"),
@@ -157,10 +172,7 @@ def main():
 
     segment_count = (args.image_size // args.piece_size) ** 2
     run_best_buddy = not args.skip_best_buddy
-    timings = []
-    component_counts = []
-    round_counts = []
-    remaining_counts = []
+    strategies = ("scan", "queue") if args.strategy == "both" else (args.strategy,)
     print(
         f"segments: {segment_count} "
         f"({args.image_size}x{args.image_size}, piece={args.piece_size})"
@@ -169,38 +181,44 @@ def main():
     print(f"score_algorithm: {args.score_algorithm.name.lower()}")
     print(f"best_buddy_setup: {run_best_buddy}")
     print("setup: score calculation and best-buddy are performed before timing")
-    for run_index in range(args.repeat):
-        elapsed, original_size, starting_components, rounds, remaining = (
-            time_kruskal_assembly_run(
-                args.image_size,
-                args.piece_size,
-                args.seed + run_index,
-                args.image_mode,
-                args.score_algorithm,
-                run_best_buddy,
-                args.boost_big_piece_priority,
+    for strategy in strategies:
+        timings = []
+        component_counts = []
+        round_counts = []
+        remaining_counts = []
+        print(f"strategy: {strategy}")
+        for run_index in range(args.repeat):
+            elapsed, original_size, starting_components, rounds, remaining = (
+                time_kruskal_assembly_run(
+                    args.image_size,
+                    args.piece_size,
+                    args.seed + run_index,
+                    args.image_mode,
+                    args.score_algorithm,
+                    run_best_buddy,
+                    strategy,
+                    args.boost_big_piece_priority,
+                )
             )
-        )
-        timings.append(elapsed)
-        component_counts.append(starting_components)
-        round_counts.append(rounds)
-        remaining_counts.append(remaining)
+            timings.append(elapsed)
+            component_counts.append(starting_components)
+            round_counts.append(rounds)
+            remaining_counts.append(remaining)
+            print(
+                f"  run {run_index + 1:02d}: "
+                f"{elapsed:.6f}s "
+                f"components={starting_components}/{original_size} "
+                f"rounds={rounds} "
+                f"remaining={remaining}"
+            )
         print(
-            f"run {run_index + 1:02d}: "
-            f"{elapsed:.6f}s "
-            f"components={starting_components}/{original_size} "
-            f"rounds={rounds} "
-            f"remaining={remaining}"
+            f"  best={min(timings):.6f}s "
+            f"median={statistics.median(timings):.6f}s "
+            f"mean={statistics.mean(timings):.6f}s "
+            f"components_median={statistics.median(component_counts)} "
+            f"rounds_median={statistics.median(round_counts)} "
+            f"remaining_median={statistics.median(remaining_counts)}"
         )
-
-    print(
-        f"best={min(timings):.6f}s "
-        f"median={statistics.median(timings):.6f}s "
-        f"mean={statistics.mean(timings):.6f}s "
-        f"components_median={statistics.median(component_counts)} "
-        f"rounds_median={statistics.median(round_counts)} "
-        f"remaining_median={statistics.median(remaining_counts)}"
-    )
 
 
 if __name__ == "__main__":

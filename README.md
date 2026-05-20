@@ -100,6 +100,7 @@ save_segments = True
 save_assembly_to_disk = True
 show_building_animation = True
 show_print_statements = True
+use_kruskal_priority_queue = True
 score_workers = None
 score_executor = "process"
 color_type = ColorType.LAB
@@ -109,6 +110,8 @@ name_for_round = "test"
 ```
 
 `score_workers = None` uses the available CPU count for score calculation. Set it to `1` to force serial scoring. `score_executor` can be `"serial"`, `"thread"`, or `"process"`. The default `"process"` backend gives true multi-core parallelism for the score-calculation phase.
+
+`use_kruskal_priority_queue = True` uses the faster priority-queue assembly path. Set it to `False` to use the older full-scan Kruskal loop.
 
 Generated tile and assembly images are written to the repo-level `output_image/` directory.
 

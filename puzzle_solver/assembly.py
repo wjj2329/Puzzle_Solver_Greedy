@@ -1,3 +1,5 @@
+import heapq
+import itertools
 import random
 
 import numpy as np
@@ -27,6 +29,122 @@ def findBestConnectionKruskal(segment_list, compare_type, boost_priority_of_big_
                     if temp.isBetterConnection(best_so_far, compare_type):
                         best_so_far = temp
         return best_so_far
+
+
+class KruskalConnectionPriorityQueue:
+    def __init__(
+            self,
+            segment_list,
+            boost_priority_of_big_pieces_joining=False,
+            compare_type=CompareWithOtherSegments.ONLY_BEST,
+            compare_mode=CompareWithOtherSegments.ONLY_BEST):
+        self.boost_priority_of_big_pieces_joining = boost_priority_of_big_pieces_joining
+        self.compare_type = compare_type
+        self.compare_mode = compare_mode
+        self._counter = itertools.count()
+        self._heap = []
+        self.addAllConnections(segment_list)
+
+    def addAllConnections(self, segment_list):
+        if self.compare_mode == CompareWithOtherSegments.ONLY_BEST:
+            for index, segment1 in enumerate(segment_list):
+                for segment2 in segment_list[index+1:]:
+                    self._pushConnection(segment1, segment2)
+        else:
+            for segment1 in segment_list:
+                for segment2 in segment_list:
+                    if segment1 != segment2:
+                        self._pushConnection(segment1, segment2)
+
+    def addConnectionsFor(self, updated_segment, segment_list):
+        if self.compare_mode != CompareWithOtherSegments.ONLY_BEST:
+            for segment in segment_list:
+                if segment is updated_segment:
+                    continue
+                self._pushConnection(updated_segment, segment)
+                self._pushConnection(segment, updated_segment)
+            return
+
+        updated_index = segment_list.index(updated_segment)
+        for index, segment in enumerate(segment_list):
+            if segment is updated_segment:
+                continue
+            if updated_index < index:
+                self._pushConnection(updated_segment, segment)
+            else:
+                self._pushConnection(segment, updated_segment)
+
+    def popBestConnection(self, segment_list):
+        active_segments = set(segment_list)
+        while self._heap:
+            _, _, connection, own_segment, join_segment, own_component_id, join_component_id = heapq.heappop(self._heap)
+            if own_segment not in active_segments or join_segment not in active_segments:
+                continue
+            if own_segment.component_id != own_component_id:
+                continue
+            if join_segment.component_id != join_component_id:
+                continue
+            return connection
+        return BestConnection()
+
+    def _pushConnection(self, segment1, segment2):
+        segment1.best_connection_found_so_far = BestConnection()
+        connection = segment1.calculateConnectionsKruskal(
+            segment2,
+            self.boost_priority_of_big_pieces_joining,
+        )
+        if connection.pic_connection_matrix is None:
+            return
+        heapq.heappush(
+            self._heap,
+            (
+                self._connectionPriority(connection),
+                next(self._counter),
+                connection,
+                connection.own_segment,
+                connection.join_segment,
+                connection.own_segment.component_id,
+                connection.join_segment.component_id,
+            ),
+        )
+
+    def _connectionPriority(self, connection):
+        if self.compare_type == CompareWithOtherSegments.COMPARE_WITH_SECOND:
+            return (
+                2 * (connection.score * (
+                    connection.score / connection.second_best_score
+                ))
+            ) + connection.score
+        return connection.score
+
+
+def assembleKruskalWithPriorityQueue(
+        segment_list,
+        original_size,
+        boost_priority_of_big_pieces_joining=False,
+        compare_type=CompareWithOtherSegments.ONLY_BEST,
+        compare_mode=CompareWithOtherSegments.ONLY_BEST,
+        on_join=None):
+    connection_queue = KruskalConnectionPriorityQueue(
+        segment_list,
+        boost_priority_of_big_pieces_joining,
+        compare_type,
+        compare_mode,
+    )
+    rounds = 0
+    while len(segment_list) > 1:
+        best_connection = connection_queue.popBestConnection(segment_list)
+        if best_connection.pic_connection_matrix is None:
+            break
+        joinPieces(best_connection, segment_list, original_size)
+        connection_queue.addConnectionsFor(
+            best_connection.own_segment,
+            segment_list,
+        )
+        if on_join is not None:
+            on_join(best_connection, rounds)
+        rounds += 1
+    return rounds
 
 
 def findBestConnectionPrim(segment_list, root_segment, compare_type):

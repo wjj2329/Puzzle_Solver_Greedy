@@ -6,6 +6,7 @@ from PIL import Image
 from skimage import color
 
 from .assembly import (
+    KruskalConnectionPriorityQueue,
     connectBestBudsFirst,
     findBestConnectionKruskal,
     findBestConnectionPrim,
@@ -44,6 +45,7 @@ def main():
     show_print_statements = True
     boost_priority_of_big_pieces_joining = False
     connect_best_friends_first = True
+    use_kruskal_priority_queue = True
     score_workers = None
     score_executor = "process"
 
@@ -81,15 +83,34 @@ def main():
         connectBestBudsFirst(segment_list, original_size, show_print_statements)
     if assembly_type == AssemblyType.PRIM:
         root = findBestRootSegment(segment_list)
+    kruskal_queue = None
+    if assembly_type == AssemblyType.KRUSKAL and use_kruskal_priority_queue:
+        kruskal_queue = KruskalConnectionPriorityQueue(
+            segment_list,
+            boost_priority_of_big_pieces_joining,
+            compare_type,
+            compare_type,
+        )
     while len(segment_list) > 1:
         best_connection = None
         if assembly_type == AssemblyType.KRUSKAL:
-            best_connection = findBestConnectionKruskal(
-                segment_list, compare_type, boost_priority_of_big_pieces_joining, compare_type)
+            if kruskal_queue is None:
+                best_connection = findBestConnectionKruskal(
+                    segment_list,
+                    compare_type,
+                    boost_priority_of_big_pieces_joining,
+                    compare_type,
+                )
+            else:
+                best_connection = kruskal_queue.popBestConnection(segment_list)
         if assembly_type == AssemblyType.PRIM:
             best_connection = findBestConnectionPrim(
                 segment_list, root, compare_type)
+        if best_connection is None or best_connection.pic_connection_matrix is None:
+            break
         joinPieces(best_connection, segment_list, original_size)
+        if kruskal_queue is not None:
+            kruskal_queue.addConnectionsFor(best_connection.own_segment, segment_list)
         root = best_connection.own_segment
         if save_assembly_to_disk:
             image_name = saveImage(best_connection, length, round_number, color_type, name_for_round)

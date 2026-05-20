@@ -1,4 +1,6 @@
 from .assembly import (
+    KruskalConnectionPriorityQueue,
+    assembleKruskalWithPriorityQueue,
     checkFunctionCalculatesTheSameOnEachPiece,
     calculateSinglePieceConnection,
     clearDictionaryForRam,
