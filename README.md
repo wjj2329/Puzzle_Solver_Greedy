@@ -6,7 +6,7 @@ It was originally written as a Python learning project, so some parts of the cod
 
 ## How It Works
 
-At a high level, `puzzle_solver/Solver.py` does the following:
+At a high level, the `puzzle_solver` package does the following:
 
 1. Loads an input image.
 2. Splits the image into fixed-size square tiles.
@@ -32,7 +32,19 @@ The default path in `main()` uses LAB color, combined Euclidean/Mahalanobis scor
 ```text
 .
 ├── puzzle_solver/
-│   ├── Solver.py      # Main puzzle splitting, scoring, and assembly code
+│   ├── __main__.py        # Module entry point for python3 -m puzzle_solver
+│   ├── assembly.py        # Kruskal/Prim/best-buddy assembly logic
+│   ├── cli.py             # Existing argparse setup
+│   ├── distances.py       # Euclidean and Mahalanobis distance helpers
+│   ├── enums.py           # Algorithm, color, direction, and assembly enums
+│   ├── image_io.py        # Output directory and image writing helpers
+│   ├── models.py          # Segment, BestConnection, ScoreEdge, ScorePayload
+│   ├── paths.py           # Project input/output paths
+│   ├── runner.py          # Main solver workflow
+│   ├── score_helpers.py   # Pairwise edge score helpers
+│   ├── scoring.py         # Serial/thread/process score calculation
+│   ├── solver.py          # Direct-file entry point
+│   └── tiling.py          # Image splitting and GIST helpers
 ├── input_image/
 │   └── William.png    # Example input image
 ├── output_image/     # Generated puzzle pieces and assembly snapshots
@@ -60,7 +72,7 @@ Because this is older exploratory code, it may need small dependency/version fix
 Install the Python dependencies with:
 
 ```bash
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
 
 ## Running
@@ -68,10 +80,16 @@ pip install -r requirements.txt
 From the repository root:
 
 ```bash
-python puzzle_solver/Solver.py
+python3 -m puzzle_solver
 ```
 
-The solver is currently configured by editing variables inside `main()` in `puzzle_solver/Solver.py`.
+You can also run the direct-file entry point:
+
+```bash
+python3 puzzle_solver/solver.py
+```
+
+The solver is currently configured by editing variables inside `main()` in `puzzle_solver/runner.py`.
 
 Important defaults:
 
@@ -97,7 +115,13 @@ Generated tile and assembly images are written to the repo-level `output_image/`
 To benchmark score-calculation backends on generated image data:
 
 ```bash
-python benchmarks/benchmark_scores.py --image-size 960 --piece-size 30 --runs serial:1 process:4 process:8
+python3 benchmarks/benchmark_scores.py --image-size 960 --piece-size 30 --runs serial:1 process:4 process:8
+```
+
+To benchmark the best-buddy pre-assembly pass:
+
+```bash
+python3 benchmarks/benchmark_best_buddy.py --image-size 240 --piece-size 30 --repeat 3
 ```
 
 ## Testing
@@ -105,7 +129,7 @@ python benchmarks/benchmark_scores.py --image-size 960 --piece-size 30 --runs se
 After installing the dependencies, run the baseline test suite from the repository root:
 
 ```bash
-python -m unittest discover
+python3 -m unittest discover
 ```
 
 ## Input Image Notes
@@ -134,12 +158,12 @@ These generated artifacts are ignored by Git.
 - Some scoring strategies are experimental or marked as unfinished.
 - The GIST workflow references a Windows-specific executable/path.
 - The solver is computationally expensive for larger tile counts.
-- The code has not yet been refactored into smaller modules.
+- `Segment` still owns a lot of behavior and could be simplified further.
 
 ## Possible Cleanup Ideas
 
 - Wire `argparse` into `main()` so the image, tile size, and algorithm can be selected from the command line.
 - Add a `pyproject.toml`.
-- Separate image splitting, scoring, assembly, and rendering into modules.
+- Shrink `Segment` into a smaller data object and move the remaining behavior into services/functions.
 - Add a deterministic shuffle seed for repeatable runs.
 - Expand tests around full puzzle assembly and known edge cases.

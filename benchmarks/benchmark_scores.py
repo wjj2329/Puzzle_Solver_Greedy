@@ -8,9 +8,9 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "puzzle_solver"))
+sys.path.insert(0, str(ROOT))
 
-import Solver  # noqa: E402
+import puzzle_solver as Solver  # noqa: E402
 
 
 def build_segments(image_size, piece_size, seed):

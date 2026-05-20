@@ -13,16 +13,15 @@ except ModuleNotFoundError as exc:
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOLVER_DIR = ROOT / "puzzle_solver"
 
 
 def load_solver():
-    sys.path.insert(0, str(SOLVER_DIR))
+    sys.path.insert(0, str(ROOT))
     try:
-        import Solver
+        import puzzle_solver
     except ModuleNotFoundError as exc:
         raise unittest.SkipTest("Install requirements.txt to run solver tests") from exc
-    return Solver
+    return puzzle_solver
 
 
 solver = load_solver()
@@ -531,12 +530,58 @@ class ConnectionTests(unittest.TestCase):
         }
 
         solver.connectBestBudsFirst(
-            [first, second, third], original_size=3, show_progress=False)
+            [first, second, third],
+            original_size=3,
+            show_progress=False,
+        )
 
         self.assertEqual(
             sorted([(1, 2), (1, 3), (2, 1), (2, 3), (3, 1), (3, 2)]),
             sorted(calls),
         )
+
+    def test_single_piece_best_buddy_connection_uses_best_edge_score(self):
+        score_dict = {}
+        first = solver.Segment(
+            np.zeros((2, 2, 3)),
+            max_width=2,
+            max_height=2,
+            piece_number=1,
+            component_id=1,
+            score_dict=score_dict,
+            gist=None,
+            connections_dict={},
+        )
+        second = solver.Segment(
+            np.ones((2, 2, 3)),
+            max_width=2,
+            max_height=2,
+            piece_number=2,
+            component_id=2,
+            score_dict=score_dict,
+            gist=None,
+            connections_dict={},
+        )
+        for direction, score in {
+            solver.JoinDirection.UP: 9,
+            solver.JoinDirection.DOWN: 8,
+            solver.JoinDirection.LEFT: 1,
+            solver.JoinDirection.RIGHT: 7,
+        }.items():
+            score_dict[1, direction, 2] = score
+
+        connection = solver.calculateSinglePieceConnection(first, second)
+
+        self.assertEqual(1, connection.score)
+        self.assertEqual(7, connection.second_best_score)
+        self.assertIs(connection.own_segment, first)
+        self.assertIs(connection.join_segment, second)
+        np.testing.assert_array_equal(
+            np.asarray([[1, 1]]),
+            connection.binary_connection_matrix,
+        )
+        self.assertIs(connection.pic_connection_matrix[0, 0], second)
+        self.assertIs(connection.pic_connection_matrix[0, 1], first)
 
     def test_best_connection_strips_empty_rows_and_columns(self):
         connection = solver.BestConnection(
