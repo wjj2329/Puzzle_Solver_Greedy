@@ -137,6 +137,16 @@ python3 benchmarks/benchmark_kruskal_assembly.py --image-size 240 --piece-size 3
 That benchmark uses a smooth synthetic gradient image by default. Use
 `--image-mode random` if you want to stress-test the solver on noisier input.
 
+To profile a full solver run by phase:
+
+```bash
+python3 benchmarks/profile_solver_run.py --piece-size 120 --score-workers 4
+```
+
+Use `--piece-size 30` to profile the current full-size runner default; it can
+take several minutes. Add `--save-segments` or `--save-assembly` when you want
+to measure image-output overhead too.
+
 ## Testing
 
 After installing the dependencies, run the baseline test suite from the repository root:
