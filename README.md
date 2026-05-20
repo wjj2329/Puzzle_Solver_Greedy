@@ -124,6 +124,16 @@ To benchmark the best-buddy pre-assembly pass:
 python3 benchmarks/benchmark_best_buddy.py --image-size 240 --piece-size 30 --repeat 3
 ```
 
+To benchmark the round-by-round Kruskal assembly loop after score calculation
+and best-buddy setup:
+
+```bash
+python3 benchmarks/benchmark_kruskal_assembly.py --image-size 240 --piece-size 30
+```
+
+That benchmark uses a smooth synthetic gradient image by default. Use
+`--image-mode random` if you want to stress-test the solver on noisier input.
+
 ## Testing
 
 After installing the dependencies, run the baseline test suite from the repository root:
