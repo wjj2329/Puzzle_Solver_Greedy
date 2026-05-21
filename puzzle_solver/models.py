@@ -402,6 +402,7 @@ class Segment:
             (height_padded, width_padded), dtype="object")
         padded1_pointer[h2:(height_combined), w2:(
                         width_combined)] = own_pic_connection_matrix
+        store = nonzero(pad_with_piece1)
         for x in range(height_padded-(h2-1)):
             for y in range(width_padded-(w2-1)):
                 pad_with_piece2 = zeros(neighboring_connections_shape)
@@ -415,7 +416,6 @@ class Segment:
                     continue
                 combined_pieces = pad_with_piece1+pad_with_piece2
                 if checkCompatibility(combined_pieces, max_height, max_width):
-                    store = nonzero(pad_with_piece1)
                     score = 0
                     comparison_count = 0
                     temp_pointer = zeros(

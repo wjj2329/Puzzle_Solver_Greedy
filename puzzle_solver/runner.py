@@ -18,7 +18,7 @@ from .enums import AssemblyType, ColorType
 from .image_io import saveImage
 from .postprocess import trimAndFillAssembly
 from .scoring import calculateScores, finalizeScores
-from .tiling import breakUpImage
+from .tiling import breakUpImage, saveSegmentImagesAsync
 
 
 def main(argv=None):
@@ -32,19 +32,30 @@ def main(argv=None):
     segment_list = breakUpImage(
         image,
         length,
-        args.save_segments,
+        False,
         args.color_type,
         output_dir=args.output_dir,
     )
-    calculateScores(
-        segment_list,
-        args.score_algorithm,
-        args.show_progress,
-        args.score_workers,
-        args.score_executor,
-    )
+    segment_save_batch = None
+    if args.save_segments:
+        segment_save_batch = saveSegmentImagesAsync(
+            segment_list,
+            args.color_type,
+            args.output_dir,
+        )
+    try:
+        calculateScores(
+            segment_list,
+            args.score_algorithm,
+            args.show_progress,
+            args.score_workers,
+            args.score_executor,
+        )
 
-    finalizeScores(segment_list, args.score_algorithm, args.score_mode)
+        finalizeScores(segment_list, args.score_algorithm, args.score_mode)
+    finally:
+        if segment_save_batch is not None:
+            segment_save_batch.wait()
     elapsed_time_secs = time.time() - start_time
     if args.show_progress:
         print("Score preparation took: %s secs " % elapsed_time_secs)

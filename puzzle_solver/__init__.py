@@ -59,4 +59,4 @@ from .scoring import (
     scoreEntriesForPayloadRange,
     scoreEntriesForSegment,
 )
-from .tiling import breakUpImage
+from .tiling import breakUpImage, saveSegmentImagesAsync, segmentImagePath, writeSegmentImage

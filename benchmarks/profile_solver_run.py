@@ -81,11 +81,19 @@ def run_profile(args):
         segments = Solver.breakUpImage(
             image,
             args.piece_size,
-            save_segments=args.save_segments,
+            save_segments=False,
             color_type=color_type,
             output_dir=output_dir,
         )
     original_size = len(segments)
+    segment_save_batch = None
+    if args.save_segments:
+        with timer.time("start_segment_writes"):
+            segment_save_batch = Solver.saveSegmentImagesAsync(
+                segments,
+                color_type,
+                output_dir,
+            )
 
     with timer.time("calculate_scores"):
         with quiet_stdout(args.show_progress):
@@ -99,6 +107,10 @@ def run_profile(args):
 
     with timer.time("finalize_scores"):
         Solver.finalizeScores(segments, score_algorithm, score_mode)
+
+    if segment_save_batch is not None:
+        with timer.time("wait_segment_writes"):
+            segment_save_batch.wait()
 
     with timer.time("shuffle_segments"):
         random.Random(args.seed).shuffle(segments)

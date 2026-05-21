@@ -1,4 +1,3 @@
-from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import os
 
@@ -185,29 +184,36 @@ def applyScoreMode(segment_list, score_mode=ScoreMode.DISSIMILARITY):
 
 def applyReliabilityScores(segment_list):
     score_dict = scoreDict(segment_list)
-    grouped_scores = defaultdict(list)
+    best_by_piece_direction = {}
+    second_best_by_piece_direction = {}
+    score_count_by_piece_direction = {}
     for own_number, direction, join_number in score_dict:
-        grouped_scores[own_number, direction].append(
-            score_dict[own_number, direction, join_number])
+        key = (own_number, direction)
+        score = score_dict[own_number, direction, join_number]
+        best_score = best_by_piece_direction.get(key, float("inf"))
+        second_best_score = second_best_by_piece_direction.get(key, float("inf"))
+        score_count_by_piece_direction[key] = (
+            score_count_by_piece_direction.get(key, 0) + 1
+        )
+        if score <= best_score:
+            second_best_score = best_score
+            best_score = score
+        elif score < second_best_score:
+            second_best_score = score
+        best_by_piece_direction[key] = best_score
+        second_best_by_piece_direction[key] = second_best_score
 
-    second_best_by_piece_direction = {
-        key: secondBestScore(scores)
-        for key, scores in grouped_scores.items()
-    }
     for own_number, direction, join_number in list(score_dict):
         raw_score = score_dict[own_number, direction, join_number]
-        second_best_score = second_best_by_piece_direction[own_number, direction]
+        key = (own_number, direction)
+        if score_count_by_piece_direction[key] < 2:
+            second_best_score = best_by_piece_direction[key]
+        else:
+            second_best_score = second_best_by_piece_direction[key]
         score_dict[own_number, direction, join_number] = reliabilityScore(
             raw_score,
             second_best_score,
         )
-
-
-def secondBestScore(scores):
-    sorted_scores = sorted(scores)
-    if len(sorted_scores) < 2:
-        return sorted_scores[0] if sorted_scores else 0.0
-    return sorted_scores[1]
 
 
 def reliabilityScore(score, second_best_score):
