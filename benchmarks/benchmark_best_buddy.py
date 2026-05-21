@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT))
 import puzzle_solver as Solver  # noqa: E402
 
 
-def build_scored_segments(image_size, piece_size, seed, score_algorithm):
+def build_scored_segments(image_size, piece_size, seed, score_algorithm, score_mode):
     rng = np.random.default_rng(seed)
     image = rng.integers(
         0, 255, size=(image_size, image_size, 3), dtype=np.uint8)
@@ -33,15 +33,18 @@ def build_scored_segments(image_size, piece_size, seed, score_algorithm):
             max_workers=1,
             executor_type="serial",
         )
-    if score_algorithm in (
-            Solver.ScoreAlgorithm.GIST_AND_EUCLIDEAN,
-            Solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS):
-        Solver.normalizeScores(segments, score_algorithm)
+    Solver.finalizeScores(segments, score_algorithm, score_mode)
     return segments
 
 
-def time_best_buddy_run(image_size, piece_size, seed, score_algorithm):
-    segments = build_scored_segments(image_size, piece_size, seed, score_algorithm)
+def time_best_buddy_run(image_size, piece_size, seed, score_algorithm, score_mode):
+    segments = build_scored_segments(
+        image_size,
+        piece_size,
+        seed,
+        score_algorithm,
+        score_mode,
+    )
     original_size = len(segments)
     started = time.perf_counter()
     with contextlib.redirect_stdout(io.StringIO()):
@@ -65,6 +68,16 @@ def parse_score_algorithm(name):
             f"unknown score algorithm {name!r}; choose one of: {choices}") from exc
 
 
+def parse_score_mode(name):
+    normalized = name.strip().upper().replace("-", "_")
+    try:
+        return Solver.ScoreMode[normalized]
+    except KeyError as exc:
+        choices = ", ".join(mode.name.lower() for mode in Solver.ScoreMode)
+        raise argparse.ArgumentTypeError(
+            f"unknown score mode {name!r}; choose one of: {choices}") from exc
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Benchmark the best-buddy pre-assembly pass.")
@@ -79,6 +92,13 @@ def main():
         help="Score algorithm to use for precomputed edge scores. "
              "Default: euclidean",
     )
+    parser.add_argument(
+        "--score-mode",
+        type=parse_score_mode,
+        default=Solver.ScoreMode.DISSIMILARITY,
+        help="Score interpretation mode. dissimilarity preserves raw lower-is-better "
+             "edge costs; reliability uses second-best reliability costs.",
+    )
     args = parser.parse_args()
 
     if args.image_size % args.piece_size != 0:
@@ -92,6 +112,7 @@ def main():
         f"({args.image_size}x{args.image_size}, piece={args.piece_size})"
     )
     print(f"score_algorithm: {args.score_algorithm.name.lower()}")
+    print(f"score_mode: {args.score_mode.name.lower()}")
     print("setup: score calculation is performed before timing each run")
 
     timings = []
@@ -102,6 +123,7 @@ def main():
             args.piece_size,
             args.seed + run_index,
             args.score_algorithm,
+            args.score_mode,
         )
         timings.append(elapsed)
         merge_counts.append(merges)

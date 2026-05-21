@@ -13,16 +13,17 @@ from .assembly import (
     findBestRootSegment,
     joinPieces,
 )
-from .enums import AssemblyType, ColorType, CompareWithOtherSegments, ScoreAlgorithm
+from .cli import parseArguments
+from .enums import AssemblyType, ColorType
 from .image_io import saveImage
-from .paths import IMAGE_INPUT_DIR
-from .scoring import calculateScores, normalizeScores
+from .postprocess import trimAndFillAssembly
+from .scoring import calculateScores, finalizeScores
 from .tiling import breakUpImage
 
 
 # TODO  Multiple edge layers.  Maybe corner pixels have some extra say?
 # TODO Maybe have it go in lines? Or at least start off with two lines one horizontal one vertical to build off and stop going out of bounds?
-# TODO maybe combo of kruskal and prims? Divide into blocks? Limit the number of trees? Force to use prims after awhile?
+# TODO maybe combo of Kruskal and Prim? Divide into blocks? Limit the number of trees? Force Prim after a while?
 # TODO do a best buddy where each piece thinks the other is the best and get those done FIRST
 # TODO Different color spaces
 # TODO Find balance of second best ratio
@@ -34,40 +35,36 @@ from .tiling import breakUpImage
 # https://www.sciencedirect.com/science/article/pii/S131915781830394X gist combo with euclidean
 # https://pdfs.semanticscholar.org/4003/7d131e3365feb9d69912b3c8e8527e9ed2d5.pdf  cycle detection
 # Filter the image?  Gaussian blur etc?
-def main():
+def main(argv=None):
+    args = parseArguments(argv)
     start_time = time.time()
-    picture_file_name = IMAGE_INPUT_DIR / "William.png"
-    length = 30
-    save_segments = True
+    picture_file_name = args.image
+    length = args.piece_size
     image = iio.imread(picture_file_name)
-    save_assembly_to_disk = True
-    show_building_animation = True
-    show_print_statements = True
-    boost_priority_of_big_pieces_joining = False
-    connect_best_friends_first = True
-    use_kruskal_priority_queue = True
-    score_workers = None
-    score_executor = "process"
-
-    color_type = ColorType.LAB
-    assembly_type = AssemblyType.KRUSKAL
-    score_algorithm = ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS
-    compare_type = CompareWithOtherSegments.ONLY_BEST
-    name_for_round = "test"
-
-    if color_type == ColorType.LAB:
+    if args.color_type == ColorType.LAB:
         image = color.rgb2lab(image)
     segment_list = breakUpImage(
-        image, length, save_segments, color_type, score_algorithm)
+        image,
+        length,
+        args.save_segments,
+        args.color_type,
+        args.score_algorithm,
+        output_dir=args.output_dir,
+    )
     calculateScores(
-        segment_list, score_algorithm, show_print_statements, score_workers, score_executor)
+        segment_list,
+        args.score_algorithm,
+        args.show_progress,
+        args.score_workers,
+        args.score_executor,
+    )
 
-    normalizeScores(segment_list, score_algorithm)
+    finalizeScores(segment_list, args.score_algorithm, args.score_mode)
     elapsed_time_secs = time.time() - start_time
-    if show_print_statements:
-        print("Calculate scores took: %s secs " % elapsed_time_secs)
+    if args.show_progress:
+        print("Score preparation took: %s secs " % elapsed_time_secs)
     window, w = None, None
-    if show_building_animation:
+    if args.show_animation:
         import tkinter
         from PIL import ImageTk
 
@@ -75,56 +72,98 @@ def main():
         window.title("Picture")
         img = ImageTk.PhotoImage(Image.open(picture_file_name))
         w = tkinter.Label(window, image=img)
-    random.shuffle(segment_list)
+    if args.shuffle_seed is None:
+        random.shuffle(segment_list)
+    else:
+        random.Random(args.shuffle_seed).shuffle(segment_list)
     round_number = 0
     original_size = len(segment_list)
     root = None
-    if connect_best_friends_first:
-        connectBestBudsFirst(segment_list, original_size, show_print_statements)
-    if assembly_type == AssemblyType.PRIM:
+    if args.connect_best_buddy_first:
+        connectBestBudsFirst(segment_list, original_size, args.show_progress)
+    if args.assembly_type == AssemblyType.PRIM:
         root = findBestRootSegment(segment_list)
     kruskal_queue = None
-    if assembly_type == AssemblyType.KRUSKAL and use_kruskal_priority_queue:
+    if (
+            args.assembly_type == AssemblyType.KRUSKAL
+            and args.use_kruskal_priority_queue):
         kruskal_queue = KruskalConnectionPriorityQueue(
             segment_list,
-            boost_priority_of_big_pieces_joining,
-            compare_type,
-            compare_type,
+            args.boost_big_piece_priority,
+            args.compare_type,
+            args.compare_type,
         )
     while len(segment_list) > 1:
         best_connection = None
-        if assembly_type == AssemblyType.KRUSKAL:
+        if args.assembly_type == AssemblyType.KRUSKAL:
             if kruskal_queue is None:
                 best_connection = findBestConnectionKruskal(
                     segment_list,
-                    compare_type,
-                    boost_priority_of_big_pieces_joining,
-                    compare_type,
+                    args.compare_type,
+                    args.boost_big_piece_priority,
+                    args.compare_type,
                 )
             else:
                 best_connection = kruskal_queue.popBestConnection(segment_list)
-        if assembly_type == AssemblyType.PRIM:
+        if args.assembly_type == AssemblyType.PRIM:
             best_connection = findBestConnectionPrim(
-                segment_list, root, compare_type)
+                segment_list, root, args.compare_type)
         if best_connection is None or best_connection.pic_connection_matrix is None:
             break
         joinPieces(best_connection, segment_list, original_size)
         if kruskal_queue is not None:
-            kruskal_queue.addConnectionsFor(best_connection.own_segment, segment_list)
+            kruskal_queue.addConnectionsFor(
+                best_connection.own_segment,
+                segment_list,
+            )
         root = best_connection.own_segment
-        if save_assembly_to_disk:
-            image_name = saveImage(best_connection, length, round_number, color_type, name_for_round)
-            if show_building_animation:
+        if args.save_assembly:
+            image_name = saveImage(
+                best_connection,
+                length,
+                round_number,
+                args.color_type,
+                args.output_name,
+                output_dir=args.output_dir,
+            )
+            if args.show_animation:
                 updated_picture = ImageTk.PhotoImage(Image.open(image_name))
                 w.configure(image=updated_picture)
                 w.image = updated_picture
                 w.pack(side="bottom", fill="both", expand="no")
                 window.update()
-        if show_print_statements == True:
-            print("for round ", round_number, " i get score of ", best_connection.score, "the ratio for first to second best is ",
-                  best_connection.score/best_connection.second_best_score, " it took ", time.time()-start_time)
+        if args.show_progress:
+            ratio = best_connection.score / best_connection.second_best_score
+            print(
+                "round ",
+                round_number,
+                "score",
+                best_connection.score,
+                "first-to-second ratio",
+                ratio,
+                "elapsed",
+                time.time() - start_time,
+            )
         round_number += 1
 
-    if show_print_statements == True:
+    if args.trim_fill:
+        final_connection = trimAndFillAssembly(segment_list, args.show_progress)
+        if final_connection is not None and args.save_assembly:
+            image_name = saveImage(
+                final_connection,
+                length,
+                round_number,
+                args.color_type,
+                args.output_name,
+                output_dir=args.output_dir,
+            )
+            if args.show_animation:
+                updated_picture = ImageTk.PhotoImage(Image.open(image_name))
+                w.configure(image=updated_picture)
+                w.image = updated_picture
+                w.pack(side="bottom", fill="both", expand="no")
+                window.update()
+
+    if args.show_progress:
         elapsed_time_secs = time.time() - start_time
         print("Execution took: %s secs " % elapsed_time_secs)

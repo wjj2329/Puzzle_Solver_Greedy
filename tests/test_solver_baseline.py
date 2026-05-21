@@ -27,6 +27,98 @@ def load_solver():
 solver = load_solver()
 
 
+class CliTests(unittest.TestCase):
+    def test_solver_cli_defaults_match_runner_defaults(self):
+        args = solver.parseArguments([])
+
+        self.assertEqual(solver.IMAGE_INPUT_DIR / "William.png", args.image)
+        self.assertEqual(30, args.piece_size)
+        self.assertTrue(args.save_segments)
+        self.assertTrue(args.save_assembly)
+        self.assertTrue(args.show_animation)
+        self.assertTrue(args.show_progress)
+        self.assertTrue(args.connect_best_buddy_first)
+        self.assertTrue(args.use_kruskal_priority_queue)
+        self.assertTrue(args.trim_fill)
+        self.assertEqual("process", args.score_executor)
+        self.assertIsNone(args.score_workers)
+        self.assertEqual(solver.ColorType.LAB, args.color_type)
+        self.assertEqual(solver.AssemblyType.KRUSKAL, args.assembly_type)
+        self.assertEqual(
+            solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
+            args.score_algorithm,
+        )
+        self.assertEqual(solver.ScoreMode.DISSIMILARITY, args.score_mode)
+        self.assertEqual(
+            solver.CompareWithOtherSegments.ONLY_BEST,
+            args.compare_type,
+        )
+
+    def test_solver_cli_parses_runtime_options(self):
+        args = solver.parseArguments([
+            "--image",
+            "input_image/smooth_gradient.png",
+            "--piece-size",
+            "120",
+            "--no-save-segments",
+            "--no-save-assembly",
+            "--no-animation",
+            "--no-progress",
+            "--no-best-buddy",
+            "--no-kruskal-priority-queue",
+            "--no-trim-fill",
+            "--boost-big-piece-priority",
+            "--score-workers",
+            "4",
+            "--score-executor",
+            "thread",
+            "--color-type",
+            "rgb",
+            "--assembly-type",
+            "prim",
+            "--score-algorithm",
+            "euclidean-and-mahalanobis",
+            "--score-mode",
+            "reliability",
+            "--compare-type",
+            "compare-with-second",
+            "--shuffle-seed",
+            "123",
+        ])
+
+        self.assertEqual(Path("input_image/smooth_gradient.png"), args.image)
+        self.assertEqual(120, args.piece_size)
+        self.assertFalse(args.save_segments)
+        self.assertFalse(args.save_assembly)
+        self.assertFalse(args.show_animation)
+        self.assertFalse(args.show_progress)
+        self.assertFalse(args.connect_best_buddy_first)
+        self.assertFalse(args.use_kruskal_priority_queue)
+        self.assertFalse(args.trim_fill)
+        self.assertTrue(args.boost_big_piece_priority)
+        self.assertEqual(4, args.score_workers)
+        self.assertEqual("thread", args.score_executor)
+        self.assertEqual(solver.ColorType.RGB, args.color_type)
+        self.assertEqual(solver.AssemblyType.PRIM, args.assembly_type)
+        self.assertEqual(
+            solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
+            args.score_algorithm,
+        )
+        self.assertEqual(solver.ScoreMode.RELIABILITY, args.score_mode)
+        self.assertEqual(
+            solver.CompareWithOtherSegments.COMPARE_WITH_SECOND,
+            args.compare_type,
+        )
+        self.assertEqual(123, args.shuffle_seed)
+
+    def test_solver_cli_help_describes_new_score_mode(self):
+        help_text = solver.buildArgumentParser().format_help()
+
+        self.assertIn("--score-mode", help_text)
+        self.assertIn("second-best reliability", help_text)
+        self.assertIn("--no-animation", help_text)
+
+
 def legacy_mahalanobis_distance(a, a2, z, z2):
     cov = np.linalg.pinv(np.cov(a.T))
     cov2 = np.linalg.pinv(np.cov(z.T))
@@ -489,6 +581,73 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(1.0, segment.score_dict[("mid",)])
         self.assertEqual(2.0, segment.score_dict[("high",)])
 
+    def test_reliability_score_mode_uses_second_best_cost_by_direction(self):
+        segment = self.make_segment(np.zeros((2, 2, 3)), piece_number=1)
+        segment.score_dict.update(
+            {
+                (1, solver.JoinDirection.RIGHT, 2): 2.0,
+                (1, solver.JoinDirection.RIGHT, 3): 10.0,
+                (2, solver.JoinDirection.LEFT, 1): 2.0,
+                (2, solver.JoinDirection.LEFT, 3): 4.0,
+            }
+        )
+
+        solver.applyScoreMode([segment], solver.ScoreMode.RELIABILITY)
+
+        self.assertEqual(
+            0.2,
+            segment.score_dict[1, solver.JoinDirection.RIGHT, 2],
+        )
+        self.assertEqual(
+            1.0,
+            segment.score_dict[1, solver.JoinDirection.RIGHT, 3],
+        )
+        self.assertEqual(
+            0.5,
+            segment.score_dict[2, solver.JoinDirection.LEFT, 1],
+        )
+        self.assertEqual(
+            1.0,
+            segment.score_dict[2, solver.JoinDirection.LEFT, 3],
+        )
+
+    def test_reliability_score_mode_treats_single_candidate_as_ambiguous(self):
+        segment = self.make_segment(np.zeros((2, 2, 3)), piece_number=1)
+        segment.score_dict[1, solver.JoinDirection.UP, 2] = 7.0
+
+        solver.applyScoreMode([segment], solver.ScoreMode.RELIABILITY)
+
+        self.assertEqual(1.0, segment.score_dict[1, solver.JoinDirection.UP, 2])
+
+    def test_finalize_scores_can_normalize_then_apply_reliability(self):
+        segment = self.make_segment(np.zeros((2, 2, 3)), piece_number=1)
+        segment.score_dict.update(
+            {
+                (1, solver.JoinDirection.RIGHT, 2): (1.0, 10.0),
+                (1, solver.JoinDirection.RIGHT, 3): (2.0, 20.0),
+                (1, solver.JoinDirection.RIGHT, 4): (3.0, 30.0),
+            }
+        )
+
+        solver.finalizeScores(
+            [segment],
+            solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
+            solver.ScoreMode.RELIABILITY,
+        )
+
+        self.assertEqual(
+            0.0,
+            segment.score_dict[1, solver.JoinDirection.RIGHT, 2],
+        )
+        self.assertEqual(
+            1.0,
+            segment.score_dict[1, solver.JoinDirection.RIGHT, 3],
+        )
+        self.assertEqual(
+            2.0,
+            segment.score_dict[1, solver.JoinDirection.RIGHT, 4],
+        )
+
 
 class ImageWriteTests(unittest.TestCase):
     def test_prepare_image_for_write_converts_unit_float_images_to_uint8(self):
@@ -558,6 +717,83 @@ class ImageWriteTests(unittest.TestCase):
             self.assertEqual(output_dir, image_path.parent)
             self.assertEqual("test round0.png", image_path.name)
             self.assertTrue(image_path.exists())
+
+
+class PostProcessTests(unittest.TestCase):
+    def make_segment(self, piece_number, score_dict, max_size=2):
+        return solver.Segment(
+            np.full((2, 2, 3), piece_number, dtype=np.uint8),
+            max_width=max_size,
+            max_height=max_size,
+            piece_number=piece_number,
+            component_id=piece_number,
+            score_dict=score_dict,
+            gist=None,
+            connections_dict={},
+        )
+
+    def test_trim_to_best_frame_keeps_densest_known_puzzle_window(self):
+        score_dict = {}
+        first = self.make_segment(1, score_dict)
+        second = self.make_segment(2, score_dict)
+        third = self.make_segment(3, score_dict)
+        root = self.make_segment(4, score_dict)
+        root.pic_connection_matrix = np.asarray(
+            [
+                [first, second, third],
+                [0, 0, 0],
+            ],
+            dtype=object,
+        )
+        root.binary_connection_matrix = (root.pic_connection_matrix != 0).astype(int)
+
+        trimmed = solver.trimToBestFrame(root)
+
+        self.assertEqual([3], [piece.piece_number for piece in trimmed])
+        self.assertEqual((2, 2), root.pic_connection_matrix.shape)
+        self.assertIs(root.pic_connection_matrix[0, 0], first)
+        self.assertIs(root.pic_connection_matrix[0, 1], second)
+
+    def test_fill_holes_uses_best_candidate_against_occupied_neighbors(self):
+        score_dict = {}
+        left = self.make_segment(1, score_dict)
+        best = self.make_segment(2, score_dict)
+        worse = self.make_segment(3, score_dict)
+        root = self.make_segment(4, score_dict)
+        root.pic_connection_matrix = np.asarray(
+            [
+                [left, 0],
+                [0, 0],
+            ],
+            dtype=object,
+        )
+        root.binary_connection_matrix = (root.pic_connection_matrix != 0).astype(int)
+        score_dict[left.piece_number, solver.JoinDirection.RIGHT, best.piece_number] = 1
+        score_dict[left.piece_number, solver.JoinDirection.RIGHT, worse.piece_number] = 9
+
+        filled = solver.fillHoles(root, [worse, best])
+
+        self.assertEqual(1, filled)
+        self.assertIs(root.pic_connection_matrix[0, 1], best)
+
+    def test_trim_and_fill_uses_leftover_components_as_candidates(self):
+        score_dict = {}
+        left = self.make_segment(1, score_dict)
+        candidate = self.make_segment(2, score_dict)
+        root = self.make_segment(3, score_dict)
+        root.pic_connection_matrix = np.asarray([[left, 0]], dtype=object)
+        root.binary_connection_matrix = (root.pic_connection_matrix != 0).astype(int)
+        leftover = candidate
+        leftover.pic_connection_matrix = np.asarray([[candidate]], dtype=object)
+        leftover.binary_connection_matrix = np.asarray([[1]])
+        score_dict[left.piece_number, solver.JoinDirection.RIGHT, candidate.piece_number] = 1
+        segments = [root, leftover]
+
+        final_connection = solver.trimAndFillAssembly(segments, show_progress=False)
+
+        self.assertEqual([root], segments)
+        self.assertIs(final_connection.own_segment, root)
+        self.assertIs(root.pic_connection_matrix[0, 1], candidate)
 
 
 class ConnectionTests(unittest.TestCase):

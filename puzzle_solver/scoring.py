@@ -1,7 +1,8 @@
-import os
+from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+import os
 
-from .enums import ScoreAlgorithm
+from .enums import ScoreAlgorithm, ScoreMode
 from .models import ScorePayload
 from .score_helpers import scorePayloadPair
 
@@ -159,9 +160,67 @@ def calculateScores(segment_list, score_algorithm, show_progress=True, max_worke
         raise ValueError("executor_type must be 'serial', 'thread', or 'process'")
 
 
+def scoreDict(segment_list):
+    if not segment_list:
+        return {}
+    return segment_list[0].score_dict
+
+
+def finalizeScores(
+        segment_list,
+        score_algorithm,
+        score_mode=ScoreMode.DISSIMILARITY):
+    normalizeScores(segment_list, score_algorithm)
+    applyScoreMode(segment_list, score_mode)
+
+
+def applyScoreMode(segment_list, score_mode=ScoreMode.DISSIMILARITY):
+    if score_mode == ScoreMode.DISSIMILARITY:
+        return
+    if score_mode == ScoreMode.RELIABILITY:
+        applyReliabilityScores(segment_list)
+        return
+    raise ValueError("score_mode must be ScoreMode.DISSIMILARITY or ScoreMode.RELIABILITY")
+
+
+def applyReliabilityScores(segment_list):
+    score_dict = scoreDict(segment_list)
+    grouped_scores = defaultdict(list)
+    for own_number, direction, join_number in score_dict:
+        grouped_scores[own_number, direction].append(
+            score_dict[own_number, direction, join_number])
+
+    second_best_by_piece_direction = {
+        key: secondBestScore(scores)
+        for key, scores in grouped_scores.items()
+    }
+    for own_number, direction, join_number in list(score_dict):
+        raw_score = score_dict[own_number, direction, join_number]
+        second_best_score = second_best_by_piece_direction[own_number, direction]
+        score_dict[own_number, direction, join_number] = reliabilityScore(
+            raw_score,
+            second_best_score,
+        )
+
+
+def secondBestScore(scores):
+    sorted_scores = sorted(scores)
+    if len(sorted_scores) < 2:
+        return sorted_scores[0] if sorted_scores else 0.0
+    return sorted_scores[1]
+
+
+def reliabilityScore(score, second_best_score):
+    if second_best_score <= 0:
+        if score <= 0:
+            return 1.0
+        return float("inf")
+    return score / second_best_score
+
+
 def normalizeScores(segment_list, score_algorithm):
     if score_algorithm == ScoreAlgorithm.GIST_AND_EUCLIDEAN:
-        score_dict = segment_list[0].score_dict
+        score_dict = scoreDict(segment_list)
         list1 = []
         list2 = []
         for value in score_dict.values():
@@ -179,7 +238,7 @@ def normalizeScores(segment_list, score_algorithm):
                               )  # extra weight to GIST
             score_dict[value] = normalized_color_score+normalized_gist_score
     elif score_algorithm == ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS:
-        score_dict = segment_list[0].score_dict
+        score_dict = scoreDict(segment_list)
         list1 = []
         list2 = []
         for value in score_dict.values():

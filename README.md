@@ -89,29 +89,56 @@ You can also run the direct-file entry point:
 python3 puzzle_solver/solver.py
 ```
 
-The solver is currently configured by editing variables inside `main()` in `puzzle_solver/runner.py`.
+Show all solver options with:
 
-Important defaults:
-
-```python
-picture_file_name = IMAGE_INPUT_DIR / "William.png"
-length = 30
-save_segments = True
-save_assembly_to_disk = True
-show_building_animation = True
-show_print_statements = True
-use_kruskal_priority_queue = True
-score_workers = None
-score_executor = "process"
-color_type = ColorType.LAB
-assembly_type = AssemblyType.KRUSKAL
-score_algorithm = ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS
-name_for_round = "test"
+```bash
+python3 -m puzzle_solver -h
 ```
 
-`score_workers = None` uses the available CPU count for score calculation. Set it to `1` to force serial scoring. `score_executor` can be `"serial"`, `"thread"`, or `"process"`. The default `"process"` backend gives true multi-core parallelism for the score-calculation phase.
+The no-argument solver run is equivalent to:
 
-`use_kruskal_priority_queue = True` uses the faster priority-queue assembly path. Set it to `False` to use the older full-scan Kruskal loop.
+```bash
+python3 -m puzzle_solver \
+  --image input_image/William.png \
+  --piece-size 30 \
+  --save-segments \
+  --save-assembly \
+  --animation \
+  --progress \
+  --best-buddy \
+  --kruskal-priority-queue \
+  --trim-fill \
+  --score-executor process \
+  --color-type lab \
+  --assembly-type kruskal \
+  --score-algorithm euclidean_and_mahalanobis \
+  --score-mode dissimilarity \
+  --compare-type only_best \
+  --output-name test
+```
+
+For a faster non-GUI run while experimenting:
+
+```bash
+python3 -m puzzle_solver --piece-size 120 --score-mode reliability --no-animation --no-save-assembly --no-save-segments --no-progress
+```
+
+`--score-workers` omitted uses the available CPU count for score calculation.
+Set it to `1` to force serial scoring. `--score-executor` can be `"serial"`,
+`"thread"`, or `"process"`. The default `"process"` backend gives true
+multi-core parallelism for the score-calculation phase.
+
+`--kruskal-priority-queue` uses the faster priority-queue assembly path. Use
+`--no-kruskal-priority-queue` for the older full-scan Kruskal loop.
+
+`--score-mode dissimilarity` uses the original lower-is-better edge costs.
+Use `--score-mode reliability` to convert those costs into second-best
+reliability scores before best-buddy and assembly.
+
+`--trim-fill` runs a Gallagher-style cleanup after greedy assembly: the largest
+assembled tree is trimmed to the known puzzle frame and remaining holes are
+filled from leftover or trimmed pieces by neighbor compatibility. Use
+`--no-trim-fill` to inspect the raw greedy tree output.
 
 Generated tile and assembly images are written to the repo-level `output_image/` directory.
 
@@ -146,6 +173,9 @@ python3 benchmarks/profile_solver_run.py --piece-size 120 --score-workers 4
 Use `--piece-size 30` to profile the current full-size runner default; it can
 take several minutes. Add `--save-segments` or `--save-assembly` when you want
 to measure image-output overhead too.
+
+The benchmark and profiling scripts default to `--score-mode dissimilarity`.
+Add `--score-mode reliability` to compare the new second-best reliability mode.
 
 ## Testing
 

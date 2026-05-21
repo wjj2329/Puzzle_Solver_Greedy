@@ -35,6 +35,11 @@ class ScoreAlgorithm(Enum):
     EUCLIDEAN_AND_MAHALANOBIS = 4
 
 
+class ScoreMode(Enum):
+    DISSIMILARITY = 1
+    RELIABILITY = 2
+
+
 class ColorType(Enum):
     RGB = 1
     LAB = 2

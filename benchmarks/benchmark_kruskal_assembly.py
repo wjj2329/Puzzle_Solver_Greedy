@@ -39,6 +39,7 @@ def build_prepared_segments(
         seed,
         image_mode,
         score_algorithm,
+        score_mode,
         run_best_buddy):
     image = build_image(image_size, seed, image_mode)
     segments = Solver.breakUpImage(
@@ -57,10 +58,7 @@ def build_prepared_segments(
             max_workers=1,
             executor_type="serial",
         )
-    if score_algorithm in (
-            Solver.ScoreAlgorithm.GIST_AND_EUCLIDEAN,
-            Solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS):
-        Solver.normalizeScores(segments, score_algorithm)
+    Solver.finalizeScores(segments, score_algorithm, score_mode)
     if run_best_buddy:
         with contextlib.redirect_stdout(io.StringIO()):
             Solver.connectBestBudsFirst(
@@ -77,6 +75,7 @@ def time_kruskal_assembly_run(
         seed,
         image_mode,
         score_algorithm,
+        score_mode,
         run_best_buddy,
         strategy,
         boost_priority_of_big_pieces_joining):
@@ -86,6 +85,7 @@ def time_kruskal_assembly_run(
         seed,
         image_mode,
         score_algorithm,
+        score_mode,
         run_best_buddy,
     )
     starting_components = len(segments)
@@ -125,6 +125,16 @@ def parse_score_algorithm(name):
             f"unknown score algorithm {name!r}; choose one of: {choices}") from exc
 
 
+def parse_score_mode(name):
+    normalized = name.strip().upper().replace("-", "_")
+    try:
+        return Solver.ScoreMode[normalized]
+    except KeyError as exc:
+        choices = ", ".join(mode.name.lower() for mode in Solver.ScoreMode)
+        raise argparse.ArgumentTypeError(
+            f"unknown score mode {name!r}; choose one of: {choices}") from exc
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Benchmark the round-by-round Kruskal assembly loop.")
@@ -154,6 +164,13 @@ def main():
              "Default: euclidean",
     )
     parser.add_argument(
+        "--score-mode",
+        type=parse_score_mode,
+        default=Solver.ScoreMode.DISSIMILARITY,
+        help="Score interpretation mode. dissimilarity preserves raw lower-is-better "
+             "edge costs; reliability uses second-best reliability costs.",
+    )
+    parser.add_argument(
         "--skip-best-buddy",
         action="store_true",
         help="Time Kruskal assembly without running the best-buddy setup pass.",
@@ -179,6 +196,7 @@ def main():
     )
     print(f"image_mode: {args.image_mode}")
     print(f"score_algorithm: {args.score_algorithm.name.lower()}")
+    print(f"score_mode: {args.score_mode.name.lower()}")
     print(f"best_buddy_setup: {run_best_buddy}")
     print("setup: score calculation and best-buddy are performed before timing")
     for strategy in strategies:
@@ -195,6 +213,7 @@ def main():
                     args.seed + run_index,
                     args.image_mode,
                     args.score_algorithm,
+                    args.score_mode,
                     run_best_buddy,
                     strategy,
                     args.boost_big_piece_priority,

@@ -16,12 +16,6 @@ sys.path.insert(0, str(ROOT))
 import puzzle_solver as Solver  # noqa: E402
 
 
-NORMALIZED_SCORE_ALGORITHMS = (
-    Solver.ScoreAlgorithm.GIST_AND_EUCLIDEAN,
-    Solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
-)
-
-
 class PhaseTimer:
     def __init__(self):
         self.timings = OrderedDict()
@@ -72,6 +66,7 @@ def run_profile(args):
     score_workers = args.score_workers
     color_type = parse_enum(Solver.ColorType, args.color_type)
     score_algorithm = parse_enum(Solver.ScoreAlgorithm, args.score_algorithm)
+    score_mode = parse_enum(Solver.ScoreMode, args.score_mode)
     total_started = time.perf_counter()
 
     with timer.time("load_image"):
@@ -103,9 +98,8 @@ def run_profile(args):
                 executor_type=args.score_executor,
             )
 
-    if score_algorithm in NORMALIZED_SCORE_ALGORITHMS:
-        with timer.time("normalize_scores"):
-            Solver.normalizeScores(segments, score_algorithm)
+    with timer.time("finalize_scores"):
+        Solver.finalizeScores(segments, score_algorithm, score_mode)
 
     with timer.time("shuffle_segments"):
         random.Random(args.seed).shuffle(segments)
@@ -191,6 +185,7 @@ def run_profile(args):
     print(f"rounds: {rounds}")
     print(f"color_type: {color_type.name.lower()}")
     print(f"score_algorithm: {score_algorithm.name.lower()}")
+    print(f"score_mode: {score_mode.name.lower()}")
     print(
         f"score_executor: {args.score_executor} "
         f"workers={format_workers(score_workers)}"
@@ -226,6 +221,11 @@ def main():
         "--score-algorithm",
         default="euclidean_and_mahalanobis",
         help="Score algorithm name. Default matches the solver runner.",
+    )
+    parser.add_argument(
+        "--score-mode",
+        default="dissimilarity",
+        help="Score interpretation mode: dissimilarity or reliability.",
     )
     parser.add_argument(
         "--score-executor",

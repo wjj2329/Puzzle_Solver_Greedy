@@ -13,7 +13,7 @@ from .assembly import (
     joinPieces,
     printPiecesMatrices,
 )
-from .cli import setUpArguments
+from .cli import buildArgumentParser, parseArguments, setUpArguments
 from .distances import euclideanDistance, mahalanobisEdgeDistance
 from .enums import (
     JOIN_EDGE_PAIRS,
@@ -23,19 +23,32 @@ from .enums import (
     CompareWithOtherSegments,
     JoinDirection,
     ScoreAlgorithm,
+    ScoreMode,
 )
 from .image_io import ensureOutputDirectory, prepareImageForWrite, saveImage
 from .models import BestConnection, ScoreEdge, ScorePayload, Segment
 from .paths import IMAGE_INPUT_DIR, IMAGE_OUTPUT_DIR, PROJECT_DIR
+from .postprocess import (
+    adjacentPieces,
+    componentSize,
+    fillHoles,
+    fillScore,
+    iterPieces,
+    trimAndFillAssembly,
+    trimToBestFrame,
+)
 from .runner import main
 from .score_helpers import reciprocalScoreEntries, scorePayloadPair
 from .scoring import (
+    applyReliabilityScores,
+    applyScoreMode,
     buildScorePayloads,
     calculateScores,
     calculateScoresProcess,
     calculateScoresSerial,
     calculateScoresThreaded,
     chunkRanges,
+    finalizeScores,
     initializeScoreWorker,
     normalizeScores,
     precomputeScoreEdges,
