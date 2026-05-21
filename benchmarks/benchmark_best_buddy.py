@@ -23,7 +23,6 @@ def build_scored_segments(image_size, piece_size, seed, score_algorithm, score_m
         piece_size,
         save_segments=False,
         color_type=Solver.ColorType.RGB,
-        score_algorithm=score_algorithm,
     )
     with contextlib.redirect_stdout(io.StringIO()):
         Solver.calculateScores(

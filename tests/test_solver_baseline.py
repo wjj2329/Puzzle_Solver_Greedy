@@ -77,7 +77,7 @@ class CliTests(unittest.TestCase):
             "--assembly-type",
             "prim",
             "--score-algorithm",
-            "euclidean-and-mahalanobis",
+            "mgc",
             "--score-mode",
             "reliability",
             "--compare-type",
@@ -101,7 +101,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(solver.ColorType.RGB, args.color_type)
         self.assertEqual(solver.AssemblyType.PRIM, args.assembly_type)
         self.assertEqual(
-            solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
+            solver.ScoreAlgorithm.MGC,
             args.score_algorithm,
         )
         self.assertEqual(solver.ScoreMode.RELIABILITY, args.score_mode)
@@ -117,6 +117,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("--score-mode", help_text)
         self.assertIn("second-best reliability", help_text)
         self.assertIn("--no-animation", help_text)
+        self.assertIn("mgc", help_text)
 
 
 def legacy_mahalanobis_distance(a, a2, z, z2):
@@ -169,7 +170,6 @@ class BreakUpImageTests(unittest.TestCase):
             length=2,
             save_segments=False,
             color_type=solver.ColorType.RGB,
-            score_algorithm=solver.ScoreAlgorithm.EUCLIDEAN,
         )
 
         self.assertEqual(4, len(segments))
@@ -189,7 +189,6 @@ class BreakUpImageTests(unittest.TestCase):
                     length=2,
                     save_segments=False,
                     color_type=solver.ColorType.RGB,
-                    score_algorithm=solver.ScoreAlgorithm.EUCLIDEAN,
                 )
 
     def test_rejects_images_not_evenly_divisible_by_tile_size(self):
@@ -202,7 +201,6 @@ class BreakUpImageTests(unittest.TestCase):
                     length=2,
                     save_segments=False,
                     color_type=solver.ColorType.RGB,
-                    score_algorithm=solver.ScoreAlgorithm.EUCLIDEAN,
                 )
 
 
@@ -217,7 +215,6 @@ class ScoreTests(unittest.TestCase):
             piece_number=piece_number,
             component_id=piece_number,
             score_dict=score_dict,
-            gist=None,
             connections_dict={},
         )
 
@@ -415,6 +412,75 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(
             expected_right_score,
             score_dict[1, solver.JoinDirection.RIGHT, 2],
+        )
+
+    def test_mgc_rewards_gradient_continuation_across_boundary(self):
+        score_dict = {}
+        first = self.make_segment(
+            np.repeat(
+                np.asarray(
+                    [
+                        [[0.0], [10.0], [20.0]],
+                        [[0.0], [10.0], [20.0]],
+                        [[0.0], [10.0], [20.0]],
+                    ]
+                ),
+                3,
+                axis=2,
+            ),
+            piece_number=1,
+            score_dict=score_dict,
+        )
+        flat_match = self.make_segment(
+            np.repeat(
+                np.asarray(
+                    [
+                        [[20.0], [20.0], [20.0]],
+                        [[20.0], [20.0], [20.0]],
+                        [[20.0], [20.0], [20.0]],
+                    ]
+                ),
+                3,
+                axis=2,
+            ),
+            piece_number=2,
+            score_dict=score_dict,
+        )
+        gradient_match = self.make_segment(
+            np.repeat(
+                np.asarray(
+                    [
+                        [[30.0], [40.0], [50.0]],
+                        [[30.0], [40.0], [50.0]],
+                        [[30.0], [40.0], [50.0]],
+                    ]
+                ),
+                3,
+                axis=2,
+            ),
+            piece_number=3,
+            score_dict=score_dict,
+        )
+
+        first.calculateScoreMGC(flat_match)
+        first.calculateScoreMGC(gradient_match)
+
+        flat_score = score_dict[1, solver.JoinDirection.RIGHT, 2]
+        gradient_score = score_dict[1, solver.JoinDirection.RIGHT, 3]
+        self.assertLess(gradient_score, flat_score)
+        self.assertEqual(
+            gradient_score,
+            score_dict[3, solver.JoinDirection.LEFT, 1],
+        )
+        self.assertGreater(
+            first.euclideanDistance(
+                first.pic_matrix[:, -1, :],
+                gradient_match.pic_matrix[:, 0, :],
+            ),
+            first.euclideanDistance(
+                first.pic_matrix[:, -1, :],
+                flat_match.pic_matrix[:, 0, :],
+            ),
         )
 
     def test_combined_lab_scores_do_not_truncate_float_edges(self):
@@ -677,7 +743,6 @@ class ImageWriteTests(unittest.TestCase):
                 length=1,
                 save_segments=True,
                 color_type=solver.ColorType.RGB,
-                score_algorithm=solver.ScoreAlgorithm.EUCLIDEAN,
                 output_dir=output_dir,
             )
 
@@ -694,7 +759,6 @@ class ImageWriteTests(unittest.TestCase):
             piece_number=1,
             component_id=1,
             score_dict={},
-            gist=None,
             connections_dict={},
         )
         connection = solver.BestConnection(
@@ -728,7 +792,6 @@ class PostProcessTests(unittest.TestCase):
             piece_number=piece_number,
             component_id=piece_number,
             score_dict=score_dict,
-            gist=None,
             connections_dict={},
         )
 
@@ -806,7 +869,6 @@ class ConnectionTests(unittest.TestCase):
             piece_number=1,
             component_id=1,
             score_dict=score_dict,
-            gist=None,
             connections_dict={},
         )
         second = solver.Segment(
@@ -816,7 +878,6 @@ class ConnectionTests(unittest.TestCase):
             piece_number=2,
             component_id=2,
             score_dict=score_dict,
-            gist=None,
             connections_dict={},
         )
         first.calculateScoreEuclidean(second)
@@ -888,7 +949,6 @@ class ConnectionTests(unittest.TestCase):
             piece_number=1,
             component_id=1,
             score_dict=score_dict,
-            gist=None,
             connections_dict={},
         )
         second = solver.Segment(
@@ -898,7 +958,6 @@ class ConnectionTests(unittest.TestCase):
             piece_number=2,
             component_id=2,
             score_dict=score_dict,
-            gist=None,
             connections_dict={},
         )
         for direction, score in {
@@ -957,7 +1016,6 @@ class ConnectionTests(unittest.TestCase):
             piece_number=1,
             component_id=1,
             score_dict=score_dict,
-            gist=None,
             connections_dict={},
         )
         second = solver.Segment(
@@ -967,7 +1025,6 @@ class ConnectionTests(unittest.TestCase):
             piece_number=2,
             component_id=2,
             score_dict=score_dict,
-            gist=None,
             connections_dict={},
         )
         connection = solver.BestConnection(
@@ -996,7 +1053,6 @@ class KruskalAssemblyTests(unittest.TestCase):
             length=4,
             save_segments=False,
             color_type=solver.ColorType.RGB,
-            score_algorithm=solver.ScoreAlgorithm.EUCLIDEAN,
         )
         solver.calculateScores(
             segments,

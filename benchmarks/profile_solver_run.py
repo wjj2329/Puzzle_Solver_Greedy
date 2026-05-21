@@ -83,7 +83,6 @@ def run_profile(args):
             args.piece_size,
             save_segments=args.save_segments,
             color_type=color_type,
-            score_algorithm=score_algorithm,
             output_dir=output_dir,
         )
     original_size = len(segments)

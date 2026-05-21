@@ -2,13 +2,17 @@ import sys
 from copy import copy
 
 import numpy as np
-import scipy.signal
 from numpy import argwhere, asarray, delete, logical_and, nonzero, zeros
 from numpy import all as numpy_all
 from numpy import sum as numpy_sum
 from scipy.ndimage import binary_dilation
 
-from .distances import euclideanDistance, mahalanobisEdgeDistance
+from .distances import (
+    MGC_DUMMY_GRADIENTS,
+    euclideanDistance,
+    mahalanobisEdgeDistance,
+    mgcEdgeDistance,
+)
 from .enums import CompareWithOtherSegments, JOIN_EDGE_PAIRS, JoinDirection
 from .score_helpers import reciprocalScoreEntries
 
@@ -17,8 +21,13 @@ class ScoreEdge:
     def __init__(self, edge, adjacent_edge):
         self.edge = np.asarray(edge, dtype=np.float64)
         self.adjacent_edge = np.asarray(adjacent_edge, dtype=np.float64)
-        self.average_delta = np.average(self.edge - self.adjacent_edge, axis=0)
+        self.gradient = self.edge - self.adjacent_edge
+        self.average_delta = np.average(self.gradient, axis=0)
+        self.gradient_average = self.average_delta
         self.inverse_covariance = np.linalg.pinv(np.cov(self.edge.T))
+        gradient_samples = np.vstack((self.gradient, MGC_DUMMY_GRADIENTS))
+        self.gradient_inverse_covariance = np.linalg.pinv(
+            np.cov(gradient_samples.T))
 
 
 class ScorePayload:
@@ -75,7 +84,7 @@ class Segment:
     binary_connection_matrix = asarray([[1, 0], [0, 0]])
     best_connection_found_so_far = BestConnection()
 
-    def __init__(self, pic_matrix, max_width, max_height, piece_number, component_id, score_dict, gist, connections_dict):
+    def __init__(self, pic_matrix, max_width, max_height, piece_number, component_id, score_dict, connections_dict):
         self.pic_matrix = pic_matrix
         self.pic_connection_matrix = asarray([[self, 0], [0, 0]])
         self.max_width = max_width
@@ -83,7 +92,6 @@ class Segment:
         self.piece_number = piece_number
         self.component_id = component_id
         self.score_dict = score_dict
-        self.gist = gist
         self.connections_dict = connections_dict
         self._own_score_edges = None
         self._compare_score_edges = None
@@ -185,15 +193,26 @@ class Segment:
             ],
         )
 
+    def scoreEntriesMGC(self, segment):
+        own_edges = self.ownScoreEdges()
+        compare_edges = segment.compareScoreEdges()
+        return self.reciprocalScoreEntries(
+            segment,
+            [
+                (
+                    own_direction,
+                    self.mgcEdgeDistance(
+                        own_edges[own_direction],
+                        compare_edges[compare_direction],
+                    ),
+                )
+                for own_direction, compare_direction in JOIN_EDGE_PAIRS
+            ],
+        )
+
     def applyScoreEntries(self, entries):
         for key, score in entries:
             self.score_dict[key] = score
-
-    def gistDistance(self, a, b, segment):
-        color_score = self.euclideanDistance(a, b)
-        gist_score = self.euclideanDistance(
-            np.asarray([self.gist]), np.asarray([segment.gist]))
-        return (color_score, gist_score)
 
     def mahalanobisDistance(self, a, a2, z, z2):
         return self.mahalanobisEdgeDistance(ScoreEdge(a, a2), ScoreEdge(z, z2))
@@ -201,49 +220,11 @@ class Segment:
     def mahalanobisEdgeDistance(self, own_edge, compare_edge):
         return mahalanobisEdgeDistance(own_edge, compare_edge)
 
+    def mgcEdgeDistance(self, own_edge, compare_edge):
+        return mgcEdgeDistance(own_edge, compare_edge)
+
     def calculateScoreMahalanobis(self, segment):
         self.applyScoreEntries(self.scoreEntriesMahalanobis(segment))
-
-    def calculateScoreGIST(self, segment):  # this doesn't work :(
-        size = segment.pic_matrix.shape[0]
-        score_dict = self.score_dict
-        gist_distance = self.gistDistance
-
-        pic_matrix = self.pic_matrix
-        self_top = pic_matrix[0:1, :, :]
-        self_left = np.rot90(pic_matrix[:, 0:1, :])
-        self_bottom = pic_matrix[size - 1:size, :, :]
-        self_right = np.rot90(pic_matrix[:, size - 1:size, :])
-
-        segment_matrix = segment.pic_matrix
-        compare_top = segment_matrix[0:1, :, :]
-        compare_left = np.rot90(segment_matrix[:, 0:1, :])
-        compare_bottom = segment_matrix[size - 1:size, :, :]
-        compare_right = np.rot90(segment_matrix[:, size - 1:size, :])
-
-        own_number = self.piece_number
-        join_number = segment.piece_number
-        score_dict[own_number, JoinDirection.UP,
-                   join_number] = gist_distance(self_top, compare_bottom, segment)
-        score_dict[own_number, JoinDirection.DOWN,
-                   join_number] = gist_distance(self_bottom, compare_top, segment)
-        score_dict[own_number, JoinDirection.LEFT,
-                   join_number] = gist_distance(self_left, compare_right, segment)
-        score_dict[own_number, JoinDirection.RIGHT,
-                   join_number] = gist_distance(self_right, compare_left, segment)
-
-        score_dict[join_number, JoinDirection.DOWN,
-                   own_number] = score_dict[own_number, JoinDirection.UP,
-                                            join_number]
-        score_dict[join_number, JoinDirection.UP,
-                   own_number] = score_dict[own_number, JoinDirection.DOWN,
-                                            join_number]
-        score_dict[join_number, JoinDirection.RIGHT,
-                   own_number] = score_dict[own_number, JoinDirection.LEFT,
-                                            join_number]
-        score_dict[join_number, JoinDirection.LEFT,
-                   own_number] = score_dict[own_number, JoinDirection.RIGHT,
-                                            join_number]
 
     def calculateScoreEuclidean(self, segment):
         self.applyScoreEntries(self.scoreEntriesEuclidean(segment))
@@ -251,7 +232,10 @@ class Segment:
     def calculateScoreEuclideanAndMahalanobis(self, segment):
         self.applyScoreEntries(self.scoreEntriesEuclideanAndMahalanobis(segment))
 
-    def checkforcompatibility(self, booleanarray, max_height, max_width):
+    def calculateScoreMGC(self, segment):
+        self.applyScoreEntries(self.scoreEntriesMGC(segment))
+
+    def checkCompatibility(self, booleanarray, max_height, max_width):
         non_zero_values = nonzero(booleanarray)
         smallestx1 = min(non_zero_values[1])
         smallesty1 = min(non_zero_values[0])
@@ -271,7 +255,7 @@ class Segment:
         self_pic_matrix[2:shape[0]+2, 2:shape[1]+2] = self.pic_connection_matrix
         pieces_to_check = self_pic_matrix.nonzero()
         score_dict = self.score_dict
-        checkforcompatibility = self.checkforcompatibility
+        checkCompatibility = self.checkCompatibility
         compare_segment_piece_number = compare_segment.piece_number
         for x, y in zip(pieces_to_check[0], pieces_to_check[1]):
             if self_pic_matrix[x+1][y] == 0:
@@ -299,7 +283,7 @@ class Segment:
                     temp_binary_matrix = copy(self_binary_matrix)
                     temp_pic_matrix[x+1, y] = compare_segment
                     temp_binary_matrix[x+1, y] = 1
-                    if checkforcompatibility(temp_binary_matrix, self.max_height, self.max_width):
+                    if checkCompatibility(temp_binary_matrix, self.max_height, self.max_width):
                         best_connection_found_so_far.setConnection(
                             temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
 
@@ -328,7 +312,7 @@ class Segment:
                     temp_binary_matrix = copy(self_binary_matrix)
                     temp_pic_matrix[x-1, y] = compare_segment
                     temp_binary_matrix[x-1, y] = 1
-                    if checkforcompatibility(temp_binary_matrix, self.max_height, self.max_width):
+                    if checkCompatibility(temp_binary_matrix, self.max_height, self.max_width):
                         best_connection_found_so_far.setConnection(
                             temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
             if self_pic_matrix[x][y+1] == 0:
@@ -357,7 +341,7 @@ class Segment:
                     temp_binary_matrix = copy(self_binary_matrix)
                     temp_pic_matrix[x, y+1] = compare_segment
                     temp_binary_matrix[x, y+1] = 1
-                    if checkforcompatibility(temp_binary_matrix, self.max_height, self.max_width):
+                    if checkCompatibility(temp_binary_matrix, self.max_height, self.max_width):
                         best_connection_found_so_far.setConnection(
                             temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
             if self_pic_matrix[x][y-1] == 0:
@@ -383,23 +367,15 @@ class Segment:
                     temp_binary_matrix = copy(self_binary_matrix)
                     temp_pic_matrix[x, y-1] = compare_segment
                     temp_binary_matrix[x, y-1] = 1
-                    if checkforcompatibility(temp_binary_matrix, self.max_height, self.max_width):
+                    if checkCompatibility(temp_binary_matrix, self.max_height, self.max_width):
                         best_connection_found_so_far.setConnection(
                             temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
         return best_connection_found_so_far
 
-    # sadly this is slower than just brute forcing the entire thing
-    def findValuesToCompare(self, a):
-        p_a = np.pad(a, 1, mode='constant', constant_values=1)
-        window = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
-        m = scipy.signal.convolve2d(p_a, window, mode='same')
-        v = np.where((a == 1) & (m[1:-1, 1:-1] < 4))
-        return v
-
     def calculateConnectionsKruskal(self, compare_segment, boost_priority_of_big_pieces_joining):
         if (self.component_id, compare_segment.component_id) in self.connections_dict:
             return self.connections_dict[(self.component_id, compare_segment.component_id)]
-        checkforcompatibility = self.checkforcompatibility
+        checkCompatibility = self.checkCompatibility
         score_dict = self.score_dict
         best_connection_found_so_far = self.best_connection_found_so_far
         own_binary_connection_matrix = self.binary_connection_matrix
@@ -438,7 +414,7 @@ class Segment:
                         pad_with_piece1, pad_with_piece2)[:]) > 0:
                     continue
                 combined_pieces = pad_with_piece1+pad_with_piece2
-                if checkforcompatibility(combined_pieces, max_height, max_width):
+                if checkCompatibility(combined_pieces, max_height, max_width):
                     store = nonzero(pad_with_piece1)
                     score = 0
                     comparison_count = 0

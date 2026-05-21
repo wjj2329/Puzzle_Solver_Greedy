@@ -1,6 +1,21 @@
 import numpy as np
 
 
+MGC_DUMMY_GRADIENTS = np.asarray(
+    [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [-1.0, 0.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [0.0, 0.0, -1.0],
+        [1.0, 1.0, 1.0],
+        [-1.0, -1.0, -1.0],
+    ]
+)
+
+
 def euclideanDistance(a, b):
     diff = np.asarray(a, dtype=np.float64) - np.asarray(b, dtype=np.float64)
     diff = diff.reshape(diff.shape[0], -1)
@@ -16,3 +31,22 @@ def mahalanobisEdgeDistance(own_edge, compare_edge):
     scores2 = np.einsum(
         "ij,jk,ik->i", matrix2, own_edge.inverse_covariance, matrix2)
     return float(np.sqrt(np.abs(scores)).sum() + np.sqrt(np.abs(scores2)).sum())
+
+
+def mgcDirectionalDistance(source_edge, target_edge):
+    seam_gradient = target_edge.edge - source_edge.edge
+    centered = seam_gradient - source_edge.gradient_average
+    scores = np.einsum(
+        "ij,jk,ik->i",
+        centered,
+        source_edge.gradient_inverse_covariance,
+        centered,
+    )
+    return float(np.maximum(scores, 0.0).sum())
+
+
+def mgcEdgeDistance(own_edge, compare_edge):
+    return (
+        mgcDirectionalDistance(own_edge, compare_edge)
+        + mgcDirectionalDistance(compare_edge, own_edge)
+    )

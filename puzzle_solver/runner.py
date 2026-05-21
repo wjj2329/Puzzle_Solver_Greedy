@@ -21,20 +21,6 @@ from .scoring import calculateScores, finalizeScores
 from .tiling import breakUpImage
 
 
-# TODO  Multiple edge layers.  Maybe corner pixels have some extra say?
-# TODO Maybe have it go in lines? Or at least start off with two lines one horizontal one vertical to build off and stop going out of bounds?
-# TODO maybe combo of Kruskal and Prim? Divide into blocks? Limit the number of trees? Force Prim after a while?
-# TODO do a best buddy where each piece thinks the other is the best and get those done FIRST
-# TODO Different color spaces
-# TODO Find balance of second best ratio
-# TODO is Mahalanobis distance the same either way???? Did I get that wrong?
-# TODO combo of Euclidean and Mahalanobis?
-# http://chenlab.ece.cornell.edu/people/Andy/publications/Andy_files/Gallagher_cvpr2012_puzzleAssembly.pdf
-# https://jamesmccaffrey.wordpress.com/2017/11/09/example-of-calculating-the-mahalanobis-distance/
-# https://www.python.org/dev/peps/pep-0371/ use this to make it faster
-# https://www.sciencedirect.com/science/article/pii/S131915781830394X gist combo with euclidean
-# https://pdfs.semanticscholar.org/4003/7d131e3365feb9d69912b3c8e8527e9ed2d5.pdf  cycle detection
-# Filter the image?  Gaussian blur etc?
 def main(argv=None):
     args = parseArguments(argv)
     start_time = time.time()
@@ -48,7 +34,6 @@ def main(argv=None):
         length,
         args.save_segments,
         args.color_type,
-        args.score_algorithm,
         output_dir=args.output_dir,
     )
     calculateScores(

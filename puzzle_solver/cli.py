@@ -187,7 +187,3 @@ def parseArguments(argv=None):
     if args.score_workers is not None and args.score_workers <= 0:
         raise SystemExit("--score-workers must be greater than 0")
     return args
-
-
-def setUpArguments(argv=None):
-    return parseArguments(argv)

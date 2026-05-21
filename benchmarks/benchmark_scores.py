@@ -22,7 +22,6 @@ def build_segments(image_size, piece_size, seed):
         piece_size,
         save_segments=False,
         color_type=Solver.ColorType.RGB,
-        score_algorithm=Solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
     )
 
 

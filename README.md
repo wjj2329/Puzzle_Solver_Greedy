@@ -20,12 +20,14 @@ The solver currently supports several scoring/assembly ideas in code:
 - Euclidean color distance between neighboring edges.
 - Mahalanobis distance between neighboring edges.
 - A combined Euclidean plus Mahalanobis score.
+- Gallagher-style Mahalanobis Gradient Compatibility scoring.
+- Second-best reliability scoring.
 - LAB or RGB color comparison.
 - Kruskal-style greedy assembly.
 - Prim-style greedy assembly.
-- Early exploratory GIST-based scoring code.
+- Trim-and-fill cleanup for holes left by the greedy assembly.
 
-The default path in `main()` uses LAB color, combined Euclidean/Mahalanobis scoring, and Kruskal-style assembly.
+The default path uses LAB color, combined Euclidean/Mahalanobis scoring, Kruskal-style assembly, and trim-and-fill cleanup.
 
 ## Repository Layout
 
@@ -34,7 +36,7 @@ The default path in `main()` uses LAB color, combined Euclidean/Mahalanobis scor
 ├── puzzle_solver/
 │   ├── __main__.py        # Module entry point for python3 -m puzzle_solver
 │   ├── assembly.py        # Kruskal/Prim/best-buddy assembly logic
-│   ├── cli.py             # Existing argparse setup
+│   ├── cli.py             # Command-line argument setup
 │   ├── distances.py       # Euclidean and Mahalanobis distance helpers
 │   ├── enums.py           # Algorithm, color, direction, and assembly enums
 │   ├── image_io.py        # Output directory and image writing helpers
@@ -44,7 +46,7 @@ The default path in `main()` uses LAB color, combined Euclidean/Mahalanobis scor
 │   ├── score_helpers.py   # Pairwise edge score helpers
 │   ├── scoring.py         # Serial/thread/process score calculation
 │   ├── solver.py          # Direct-file entry point
-│   └── tiling.py          # Image splitting and GIST helpers
+│   └── tiling.py          # Image splitting helpers
 ├── input_image/
 │   └── William.png    # Example input image
 ├── output_image/     # Generated puzzle pieces and assembly snapshots
@@ -135,6 +137,15 @@ multi-core parallelism for the score-calculation phase.
 Use `--score-mode reliability` to convert those costs into second-best
 reliability scores before best-buddy and assembly.
 
+`--score-algorithm mgc` uses Gallagher-style Mahalanobis Gradient
+Compatibility. It compares the seam gradient against each piece's internal
+edge-gradient distribution, then sums both directions before optional
+second-best reliability scoring. A paper-style run is:
+
+```bash
+python3 -m puzzle_solver --score-algorithm mgc --score-mode reliability
+```
+
 `--trim-fill` runs a Gallagher-style cleanup after greedy assembly: the largest
 assembled tree is trimmed to the known puzzle frame and remaining holes are
 filled from leftover or trimmed pieces by neighbor compatibility. Use
@@ -201,22 +212,17 @@ Depending on the settings in `main()`, running the solver can generate:
 
 - Individual tile images such as `output_image/0_0.png`, `output_image/0_1.png`, etc.
 - Assembly snapshots such as `output_image/test round0.png`, `output_image/test round1.png`, etc.
-- GIST output files if the GIST path is used.
 
 These generated artifacts are ignored by Git.
 
 ## Current Limitations
 
-- Command-line argument parsing exists but is not wired into `main()`.
-- Some scoring strategies are experimental or marked as unfinished.
-- The GIST workflow references a Windows-specific executable/path.
+- Some scoring strategies are experimental and need more benchmark coverage.
 - The solver is computationally expensive for larger tile counts.
 - `Segment` still owns a lot of behavior and could be simplified further.
 
 ## Possible Cleanup Ideas
 
-- Wire `argparse` into `main()` so the image, tile size, and algorithm can be selected from the command line.
 - Add a `pyproject.toml`.
 - Shrink `Segment` into a smaller data object and move the remaining behavior into services/functions.
-- Add a deterministic shuffle seed for repeatable runs.
-- Expand tests around full puzzle assembly and known edge cases.
+- Expand tests around full puzzle assembly, scoring comparisons, and known edge cases.

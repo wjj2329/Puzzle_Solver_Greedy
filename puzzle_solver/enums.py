@@ -31,8 +31,8 @@ class CompareWithOtherSegments(Enum):
 class ScoreAlgorithm(Enum):
     EUCLIDEAN = 1
     MAHALANOBIS = 2
-    GIST_AND_EUCLIDEAN = 3
     EUCLIDEAN_AND_MAHALANOBIS = 4
+    MGC = 5
 
 
 class ScoreMode(Enum):

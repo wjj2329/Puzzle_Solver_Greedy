@@ -1,4 +1,4 @@
-from .distances import euclideanDistance, mahalanobisEdgeDistance
+from .distances import euclideanDistance, mahalanobisEdgeDistance, mgcEdgeDistance
 from .enums import JOIN_EDGE_PAIRS, OPPOSITE_DIRECTIONS, ScoreAlgorithm
 
 
@@ -48,6 +48,17 @@ def scorePayloadPair(segment1, segment2, score_algorithm):
                         own_edges[own_direction].edge,
                         compare_edges[compare_direction].edge,
                     ),
+                ),
+            )
+            for own_direction, compare_direction in JOIN_EDGE_PAIRS
+        ]
+    elif score_algorithm == ScoreAlgorithm.MGC:
+        scores = [
+            (
+                own_direction,
+                mgcEdgeDistance(
+                    own_edges[own_direction],
+                    compare_edges[compare_direction],
                 ),
             )
             for own_direction, compare_direction in JOIN_EDGE_PAIRS

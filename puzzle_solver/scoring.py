@@ -50,6 +50,8 @@ def scoreEntriesForPair(segment1, segment2, score_algorithm):
         return segment1.scoreEntriesMahalanobis(segment2)
     elif score_algorithm == ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS:
         return segment1.scoreEntriesEuclideanAndMahalanobis(segment2)
+    elif score_algorithm == ScoreAlgorithm.MGC:
+        return segment1.scoreEntriesMGC(segment2)
     return None
 
 
@@ -69,10 +71,10 @@ def calculateScoresSerial(segment_list, score_algorithm, show_progress=True):
                 segment1.calculateScoreEuclidean(segment2)
             elif score_algorithm == ScoreAlgorithm.MAHALANOBIS:
                 segment1.calculateScoreMahalanobis(segment2)
-            elif score_algorithm == ScoreAlgorithm.GIST_AND_EUCLIDEAN:
-                segment1.calculateScoreGIST(segment2)
             elif score_algorithm == ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS:
                 segment1.calculateScoreEuclideanAndMahalanobis(segment2)
+            elif score_algorithm == ScoreAlgorithm.MGC:
+                segment1.calculateScoreMGC(segment2)
 
 
 def precomputeScoreEdges(segment_list):
@@ -148,9 +150,7 @@ def calculateScoresProcess(segment_list, score_algorithm, show_progress=True, ma
 
 
 def calculateScores(segment_list, score_algorithm, show_progress=True, max_workers=None, executor_type="thread"):
-    if score_algorithm == ScoreAlgorithm.GIST_AND_EUCLIDEAN:
-        calculateScoresSerial(segment_list, score_algorithm, show_progress)
-    elif executor_type == "serial":
+    if executor_type == "serial":
         calculateScoresSerial(segment_list, score_algorithm, show_progress)
     elif executor_type == "process":
         calculateScoresProcess(segment_list, score_algorithm, show_progress, max_workers)
@@ -219,25 +219,7 @@ def reliabilityScore(score, second_best_score):
 
 
 def normalizeScores(segment_list, score_algorithm):
-    if score_algorithm == ScoreAlgorithm.GIST_AND_EUCLIDEAN:
-        score_dict = scoreDict(segment_list)
-        list1 = []
-        list2 = []
-        for value in score_dict.values():
-            list1.append(value[0])
-            list2.append(value[1])
-        max1 = max(list1)
-        max2 = max(list2)
-        min1 = min(list1)
-        min2 = min(list2)
-        for value in score_dict:
-            color_score = score_dict[value][0]
-            distance_score = score_dict[value][1]
-            normalized_color_score = (color_score-min1)/(max1-min1)
-            normalized_gist_score = ((distance_score-min2) / (max2-min2)
-                              )  # extra weight to GIST
-            score_dict[value] = normalized_color_score+normalized_gist_score
-    elif score_algorithm == ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS:
+    if score_algorithm == ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS:
         score_dict = scoreDict(segment_list)
         list1 = []
         list2 = []
@@ -252,6 +234,5 @@ def normalizeScores(segment_list, score_algorithm):
             mahalanobis_score = score_dict[value][0]
             euclidean_score = score_dict[value][1]
             normalized_mahalanobis_score = (mahalanobis_score-min1)/(max1-min1)
-            normalized_euclidean_score = ((euclidean_score-min2) / (max2-min2)
-                              )  # extra weight to GIST
+            normalized_euclidean_score = (euclidean_score-min2) / (max2-min2)
             score_dict[value] = normalized_mahalanobis_score+normalized_euclidean_score

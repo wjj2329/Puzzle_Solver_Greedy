@@ -162,39 +162,6 @@ def findBestRootSegment(segment_list):
     return random.choice(segment_list)
 
 
-def printPiecesMatrices(segment_list):
-    for node in segment_list:
-        print(node.binary_connection_matrix)
-        print(node.pic_connection_matrix)
-        print(node.piece_number)
-    print('\n\n\n')
-
-
-def clearDictionaryForRam(my_list, removing):
-    for connection in my_list:
-        for key in dict(connection.connections_dict):
-            if key[0] == removing or key[1] == removing:
-                del connection.connections_dict[key]
-
-
-def createCrossPiece(segment_list):
-    root = findBestRootSegment(segment_list)
-
-
-def checkFunctionCalculatesTheSameOnEachPiece(segment_list, boost_priority_of_big_pieces_joining):
-    for segment in segment_list:
-        for segment2 in segment_list:
-            if segment != segment2:
-                segment.best_connection_found_so_far = BestConnection()
-                segment2.best_connection_found_so_far = BestConnection()
-                print(segment.best_connection_found_so_far)
-                temp1 = segment.calculateConnectionsKruskal(
-                    segment2, boost_priority_of_big_pieces_joining)
-                temp2 = segment2.calculateConnectionsKruskal(
-                    segment, boost_priority_of_big_pieces_joining)
-                print(temp1 == temp2)
-
-
 def findBestBuddyConnection(segment, segment_list):
     segment_is_single_piece = isSinglePiece(segment)
     best_so_far = BestConnection()

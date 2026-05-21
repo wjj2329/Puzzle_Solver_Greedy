@@ -47,7 +47,6 @@ def build_prepared_segments(
         piece_size,
         save_segments=False,
         color_type=Solver.ColorType.RGB,
-        score_algorithm=score_algorithm,
     )
     original_size = len(segments)
     with contextlib.redirect_stdout(io.StringIO()):

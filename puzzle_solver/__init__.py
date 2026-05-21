@@ -1,20 +1,22 @@
 from .assembly import (
     KruskalConnectionPriorityQueue,
     assembleKruskalWithPriorityQueue,
-    checkFunctionCalculatesTheSameOnEachPiece,
     calculateSinglePieceConnection,
-    clearDictionaryForRam,
     connectBestBudsFirst,
-    createCrossPiece,
     findBestBuddyConnection,
     findBestConnectionKruskal,
     findBestConnectionPrim,
     findBestRootSegment,
     joinPieces,
-    printPiecesMatrices,
 )
-from .cli import buildArgumentParser, parseArguments, setUpArguments
-from .distances import euclideanDistance, mahalanobisEdgeDistance
+from .cli import buildArgumentParser, parseArguments
+from .distances import (
+    MGC_DUMMY_GRADIENTS,
+    euclideanDistance,
+    mahalanobisEdgeDistance,
+    mgcDirectionalDistance,
+    mgcEdgeDistance,
+)
 from .enums import (
     JOIN_EDGE_PAIRS,
     OPPOSITE_DIRECTIONS,
@@ -57,4 +59,4 @@ from .scoring import (
     scoreEntriesForPayloadRange,
     scoreEntriesForSegment,
 )
-from .tiling import breakUpImage, get_gist
+from .tiling import breakUpImage
