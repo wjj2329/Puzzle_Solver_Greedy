@@ -137,6 +137,12 @@ def buildArgumentParser():
         help="Executor backend for score calculation.",
     )
     parser.add_argument(
+        "--score-storage",
+        choices=("dense", "dict"),
+        default="dense",
+        help="Storage backend for pairwise edge scores.",
+    )
+    parser.add_argument(
         "--color-type",
         type=enumValue(ColorType),
         metavar=f"{{{enumNames(ColorType)}}}",

@@ -1,9 +1,15 @@
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import os
 
+import numpy as np
+
 from .enums import ScoreAlgorithm, ScoreMode
 from .models import ScorePayload
-from .score_helpers import scorePayloadPair
+from .score_helpers import (
+    appendScorePayloadPairArrayValues,
+    scoreComponentCount,
+    scorePayloadPair,
+)
 
 
 _SCORE_PAYLOADS = None
@@ -29,6 +35,57 @@ def scoreEntriesForPayloadRange(start, stop):
     for index in range(start, stop):
         entries.extend(scoreEntriesForPayloadIndex(index))
     return entries
+
+
+def scoreArraysForPayloadIndex(index):
+    return scoreArraysForPayloadRange(index, index + 1)
+
+
+def scoreArraysForPayloadRange(start, stop):
+    component_count = scoreComponentCount(_SCORE_ALGORITHM)
+    own_numbers = []
+    direction_indices = []
+    join_numbers = []
+    if component_count == 1:
+        scores = []
+    else:
+        scores = ([], [])
+
+    cursor = 0
+    for index in range(start, stop):
+        segment1 = _SCORE_PAYLOADS[index]
+        for segment2 in _SCORE_PAYLOADS[index+1:]:
+            cursor = appendScorePayloadPairArrayValues(
+                segment1,
+                segment2,
+                _SCORE_ALGORITHM,
+                own_numbers,
+                direction_indices,
+                join_numbers,
+                scores,
+                cursor,
+            )
+
+    own_numbers = np.asarray(own_numbers, dtype=np.int32)
+    direction_indices = np.asarray(direction_indices, dtype=np.int8)
+    join_numbers = np.asarray(join_numbers, dtype=np.int32)
+    if component_count == 1:
+        score_values = np.asarray(scores, dtype=np.float64).reshape(-1, 1)
+    else:
+        score_values = np.empty(
+            (len(own_numbers), component_count),
+            dtype=np.float64,
+        )
+        score_values[:, 0] = scores[0]
+        score_values[:, 1] = scores[1]
+
+    return (
+        own_numbers,
+        direction_indices,
+        join_numbers,
+        score_values,
+        component_count == 1,
+    )
 
 
 def chunkRanges(length, max_chunks):
@@ -117,8 +174,12 @@ def calculateScoresThreaded(segment_list, score_algorithm, show_progress=True, m
                 score_algorithm,
             ))
         for future in as_completed(futures):
-            for key, score in future.result():
-                score_dict[key] = score
+            entries = future.result()
+            if hasattr(score_dict, "setMany"):
+                score_dict.setMany(entries)
+            else:
+                for key, score in entries:
+                    score_dict[key] = score
 
 
 def calculateScoresProcess(segment_list, score_algorithm, show_progress=True, max_workers=None):
@@ -132,6 +193,12 @@ def calculateScoresProcess(segment_list, score_algorithm, show_progress=True, ma
 
     score_payloads = buildScorePayloads(segment_list)
     score_dict = segment_list[0].score_dict
+    use_score_arrays = hasattr(score_dict, "setManyArrays")
+    score_worker = (
+        scoreArraysForPayloadRange
+        if use_score_arrays
+        else scoreEntriesForPayloadRange
+    )
     with ProcessPoolExecutor(
             max_workers=max_workers,
             initializer=initializeScoreWorker,
@@ -142,10 +209,18 @@ def calculateScoresProcess(segment_list, score_algorithm, show_progress=True, ma
                 print("calculating score for segments ",
                       segment_list[start].piece_number, " through ",
                       segment_list[stop - 1].piece_number)
-            futures.append(executor.submit(scoreEntriesForPayloadRange, start, stop))
+            futures.append(executor.submit(score_worker, start, stop))
         for future in as_completed(futures):
-            for key, score in future.result():
-                score_dict[key] = score
+            result = future.result()
+            if use_score_arrays:
+                score_dict.setManyArrays(*result)
+            elif hasattr(score_dict, "setMany"):
+                entries = result
+                score_dict.setMany(entries)
+            else:
+                entries = result
+                for key, score in entries:
+                    score_dict[key] = score
 
 
 def calculateScores(segment_list, score_algorithm, show_progress=True, max_workers=None, executor_type="thread"):
@@ -184,6 +259,10 @@ def applyScoreMode(segment_list, score_mode=ScoreMode.DISSIMILARITY):
 
 def applyReliabilityScores(segment_list):
     score_dict = scoreDict(segment_list)
+    if hasattr(score_dict, "applyReliabilityScores"):
+        score_dict.applyReliabilityScores()
+        return
+
     best_by_piece_direction = {}
     second_best_by_piece_direction = {}
     score_count_by_piece_direction = {}
@@ -227,6 +306,10 @@ def reliabilityScore(score, second_best_score):
 def normalizeScores(segment_list, score_algorithm):
     if score_algorithm == ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS:
         score_dict = scoreDict(segment_list)
+        if hasattr(score_dict, "normalizeCombinedScores"):
+            score_dict.normalizeCombinedScores()
+            return
+
         list1 = []
         list2 = []
         for value in score_dict.values():

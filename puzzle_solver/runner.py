@@ -35,6 +35,7 @@ def main(argv=None):
         False,
         args.color_type,
         output_dir=args.output_dir,
+        score_storage=args.score_storage,
     )
     segment_save_batch = None
     if args.save_segments:

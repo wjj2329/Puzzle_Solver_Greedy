@@ -7,6 +7,7 @@ from .enums import ColorType
 from .image_io import ensureOutputDirectory, prepareImageForWrite
 from .models import Segment
 from .paths import IMAGE_OUTPUT_DIR
+from .score_table import createScoreTable
 
 
 class SegmentSaveBatch:
@@ -55,7 +56,8 @@ def breakUpImage(
         length,
         save_segments,
         color_type,
-        output_dir=IMAGE_OUTPUT_DIR):
+        output_dir=IMAGE_OUTPUT_DIR,
+        score_storage="dense"):
     dimensions = image.shape
     if dimensions[0] != dimensions[1]:
         print("Only square images will work for now to keep things simple")
@@ -70,13 +72,23 @@ def breakUpImage(
     num_of_pieces_width = int(dimensions[0]/length)
     num_of_pieces_height = int(dimensions[1]/length)
     append = segments.append
-    score_dict = {}
+    score_dict = createScoreTable(
+        num_of_pieces_width * num_of_pieces_height,
+        score_storage,
+    )
     connections_dict = {}
     for x in range(num_of_pieces_width):
         for y in range(num_of_pieces_height):
             save = image[pic_x: pic_x+length, pic_y: pic_y+length, :]
-            segment_to_append = Segment(save, num_of_pieces_width,
-                                        num_of_pieces_height, piece_num, piece_num, score_dict, connections_dict)
+            segment_to_append = Segment(
+                save,
+                num_of_pieces_width,
+                num_of_pieces_height,
+                piece_num,
+                piece_num,
+                score_dict,
+                connections_dict,
+            )
             append(segment_to_append)
             piece_num += 1
             pic_y += length

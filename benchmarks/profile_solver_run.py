@@ -84,6 +84,7 @@ def run_profile(args):
             save_segments=False,
             color_type=color_type,
             output_dir=output_dir,
+            score_storage=args.score_storage,
         )
     original_size = len(segments)
     segment_save_batch = None
@@ -197,6 +198,7 @@ def run_profile(args):
     print(f"color_type: {color_type.name.lower()}")
     print(f"score_algorithm: {score_algorithm.name.lower()}")
     print(f"score_mode: {score_mode.name.lower()}")
+    print(f"score_storage: {args.score_storage}")
     print(
         f"score_executor: {args.score_executor} "
         f"workers={format_workers(score_workers)}"
@@ -243,6 +245,12 @@ def main():
         choices=("serial", "thread", "process"),
         default="process",
         help="Score calculation backend. Default matches the solver runner.",
+    )
+    parser.add_argument(
+        "--score-storage",
+        choices=("dense", "dict"),
+        default="dense",
+        help="Score storage backend. Default matches the solver runner.",
     )
     parser.add_argument(
         "--score-workers",

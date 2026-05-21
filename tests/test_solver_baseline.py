@@ -41,6 +41,7 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.use_kruskal_priority_queue)
         self.assertTrue(args.trim_fill)
         self.assertEqual("process", args.score_executor)
+        self.assertEqual("dense", args.score_storage)
         self.assertIsNone(args.score_workers)
         self.assertEqual(solver.ColorType.LAB, args.color_type)
         self.assertEqual(solver.AssemblyType.KRUSKAL, args.assembly_type)
@@ -72,6 +73,8 @@ class CliTests(unittest.TestCase):
             "4",
             "--score-executor",
             "thread",
+            "--score-storage",
+            "dict",
             "--color-type",
             "rgb",
             "--assembly-type",
@@ -98,6 +101,7 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.boost_big_piece_priority)
         self.assertEqual(4, args.score_workers)
         self.assertEqual("thread", args.score_executor)
+        self.assertEqual("dict", args.score_storage)
         self.assertEqual(solver.ColorType.RGB, args.color_type)
         self.assertEqual(solver.AssemblyType.PRIM, args.assembly_type)
         self.assertEqual(
@@ -173,6 +177,7 @@ class BreakUpImageTests(unittest.TestCase):
         )
 
         self.assertEqual(4, len(segments))
+        self.assertIsInstance(segments[0].score_dict, solver.DenseScoreTable)
         self.assertEqual([1, 2, 3, 4], [segment.piece_number for segment in segments])
         np.testing.assert_array_equal(image[0:2, 0:2, :], segments[0].pic_matrix)
         np.testing.assert_array_equal(image[0:2, 2:4, :], segments[1].pic_matrix)
@@ -190,6 +195,19 @@ class BreakUpImageTests(unittest.TestCase):
                     save_segments=False,
                     color_type=solver.ColorType.RGB,
                 )
+
+    def test_can_use_dict_score_storage(self):
+        image = np.arange(4 * 4 * 3).reshape((4, 4, 3))
+
+        segments = solver.breakUpImage(
+            image,
+            length=2,
+            save_segments=False,
+            color_type=solver.ColorType.RGB,
+            score_storage="dict",
+        )
+
+        self.assertIsInstance(segments[0].score_dict, dict)
 
     def test_rejects_images_not_evenly_divisible_by_tile_size(self):
         image = np.zeros((5, 5, 3))
@@ -627,6 +645,139 @@ class ScoreTests(unittest.TestCase):
             raise unittest.SkipTest("ProcessPoolExecutor is unavailable") from exc
 
         self.assertEqual(serial_score_dict, process_score_dict)
+
+    def test_dense_score_storage_matches_dict_scores_after_finalize(self):
+        rng = np.random.default_rng(123)
+        image = rng.integers(0, 255, size=(12, 12, 3), dtype=np.uint8)
+
+        dict_segments = solver.breakUpImage(
+            image,
+            length=4,
+            save_segments=False,
+            color_type=solver.ColorType.RGB,
+            score_storage="dict",
+        )
+        dense_segments = solver.breakUpImage(
+            image,
+            length=4,
+            save_segments=False,
+            color_type=solver.ColorType.RGB,
+            score_storage="dense",
+        )
+
+        for segments in (dict_segments, dense_segments):
+            solver.calculateScores(
+                segments,
+                solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
+                show_progress=False,
+                max_workers=1,
+                executor_type="serial",
+            )
+            solver.finalizeScores(
+                segments,
+                solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
+                solver.ScoreMode.RELIABILITY,
+            )
+
+        dict_scores = dict_segments[0].score_dict
+        dense_scores = dense_segments[0].score_dict.asDict()
+        self.assertEqual(set(dict_scores), set(dense_scores))
+        for key, dict_score in dict_scores.items():
+            self.assertAlmostEqual(dict_score, dense_scores[key], places=12)
+
+    def test_score_array_worker_matches_entry_worker(self):
+        rng = np.random.default_rng(321)
+        image = rng.integers(0, 255, size=(8, 8, 3), dtype=np.uint8)
+        segments = solver.breakUpImage(
+            image,
+            length=4,
+            save_segments=False,
+            color_type=solver.ColorType.RGB,
+            score_storage="dense",
+        )
+
+        for score_algorithm in (
+                solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
+                solver.ScoreAlgorithm.MGC):
+            with self.subTest(score_algorithm=score_algorithm):
+                payloads = solver.buildScorePayloads(segments)
+                solver.initializeScoreWorker(payloads, score_algorithm)
+                entries = solver.scoreEntriesForPayloadRange(0, len(segments))
+                arrays = solver.scoreArraysForPayloadRange(0, len(segments))
+
+                expected_scores = dict(entries)
+                dense_scores = solver.DenseScoreTable(len(segments))
+                dense_scores.setManyArrays(*arrays)
+                actual_scores = dense_scores.asDict()
+
+                self.assertEqual(set(expected_scores), set(actual_scores))
+                for key, expected_score in expected_scores.items():
+                    actual_score = actual_scores[key]
+                    if isinstance(expected_score, tuple):
+                        for expected_component, actual_component in zip(
+                                expected_score,
+                                actual_score):
+                            self.assertAlmostEqual(
+                                expected_component,
+                                actual_component,
+                                places=12,
+                            )
+                    else:
+                        self.assertAlmostEqual(
+                            expected_score,
+                            actual_score,
+                            places=12,
+                        )
+
+    def test_dense_score_storage_preserves_assembly_choices(self):
+        rng = np.random.default_rng(456)
+        image = rng.integers(0, 255, size=(12, 12, 3), dtype=np.uint8)
+
+        def assembly_history(score_storage):
+            segments = solver.breakUpImage(
+                image,
+                length=4,
+                save_segments=False,
+                color_type=solver.ColorType.RGB,
+                score_storage=score_storage,
+            )
+            solver.calculateScores(
+                segments,
+                solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
+                show_progress=False,
+                max_workers=1,
+                executor_type="serial",
+            )
+            solver.finalizeScores(
+                segments,
+                solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
+                solver.ScoreMode.RELIABILITY,
+            )
+            original_size = len(segments)
+            history = []
+            while len(segments) > 1:
+                best_connection = solver.findBestConnectionKruskal(
+                    segments,
+                    solver.CompareWithOtherSegments.ONLY_BEST,
+                    boost_priority_of_big_pieces_joining=False,
+                    compare_mode=solver.CompareWithOtherSegments.ONLY_BEST,
+                )
+                if best_connection.pic_connection_matrix is None:
+                    break
+                history.append((
+                    best_connection.score,
+                    best_connection.own_segment.piece_number,
+                    best_connection.join_segment.piece_number,
+                ))
+                solver.joinPieces(best_connection, segments, original_size)
+            return history
+
+        dict_history = assembly_history("dict")
+        dense_history = assembly_history("dense")
+        self.assertEqual(len(dict_history), len(dense_history))
+        for dict_join, dense_join in zip(dict_history, dense_history):
+            self.assertAlmostEqual(dict_join[0], dense_join[0], places=12)
+            self.assertEqual(dict_join[1:], dense_join[1:])
 
     def test_combined_score_normalization_preserves_relative_baseline(self):
         segment = self.make_segment(np.zeros((2, 2, 3)), piece_number=1)

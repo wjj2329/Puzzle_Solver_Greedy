@@ -111,6 +111,7 @@ python3 -m puzzle_solver \
   --kruskal-priority-queue \
   --trim-fill \
   --score-executor process \
+  --score-storage dense \
   --color-type lab \
   --assembly-type kruskal \
   --score-algorithm euclidean_and_mahalanobis \
@@ -129,6 +130,10 @@ python3 -m puzzle_solver --piece-size 120 --score-mode reliability --no-animatio
 Set it to `1` to force serial scoring. `--score-executor` can be `"serial"`,
 `"thread"`, or `"process"`. The default `"process"` backend gives true
 multi-core parallelism for the score-calculation phase.
+
+`--score-storage dense` stores pairwise scores in a dense NumPy-backed table
+while preserving the same `(piece, direction, piece)` lookups used by assembly.
+Use `--score-storage dict` to run with the original dictionary storage.
 
 `--kruskal-priority-queue` uses the faster priority-queue assembly path. Use
 `--no-kruskal-priority-queue` for the older full-scan Kruskal loop.

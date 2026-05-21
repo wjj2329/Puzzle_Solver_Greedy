@@ -41,6 +41,7 @@ from .postprocess import (
 )
 from .runner import main
 from .score_helpers import reciprocalScoreEntries, scorePayloadPair
+from .score_table import DenseScoreTable, createScoreTable
 from .scoring import (
     applyReliabilityScores,
     applyScoreMode,
@@ -54,9 +55,16 @@ from .scoring import (
     initializeScoreWorker,
     normalizeScores,
     precomputeScoreEdges,
+    scoreArraysForPayloadIndex,
+    scoreArraysForPayloadRange,
     scoreEntriesForPair,
     scoreEntriesForPayloadIndex,
     scoreEntriesForPayloadRange,
     scoreEntriesForSegment,
 )
-from .tiling import breakUpImage, saveSegmentImagesAsync, segmentImagePath, writeSegmentImage
+from .tiling import (
+    breakUpImage,
+    saveSegmentImagesAsync,
+    segmentImagePath,
+    writeSegmentImage,
+)
