@@ -1135,6 +1135,41 @@ class ConnectionTests(unittest.TestCase):
         self.assertIs(connection.pic_connection_matrix[0, 0], second)
         self.assertIs(connection.pic_connection_matrix[0, 1], first)
 
+    def test_single_piece_best_buddy_preserves_direction_tie_order(self):
+        score_dict = {}
+        first = solver.Segment(
+            np.zeros((2, 2, 3)),
+            max_width=2,
+            max_height=2,
+            piece_number=1,
+            component_id=1,
+            score_dict=score_dict,
+            connections_dict={},
+        )
+        second = solver.Segment(
+            np.ones((2, 2, 3)),
+            max_width=2,
+            max_height=2,
+            piece_number=2,
+            component_id=2,
+            score_dict=score_dict,
+            connections_dict={},
+        )
+        for direction, score in {
+            solver.JoinDirection.UP: 1,
+            solver.JoinDirection.DOWN: 3,
+            solver.JoinDirection.LEFT: 1,
+            solver.JoinDirection.RIGHT: 2,
+        }.items():
+            score_dict[1, direction, 2] = score
+
+        connection = solver.calculateSinglePieceConnection(first, second)
+
+        self.assertEqual(1, connection.score)
+        self.assertEqual(1, connection.second_best_score)
+        self.assertIs(connection.pic_connection_matrix[0, 0], second)
+        self.assertIs(connection.pic_connection_matrix[1, 0], first)
+
     def test_best_connection_strips_empty_rows_and_columns(self):
         connection = solver.BestConnection(
             pic_connection_matrix=np.asarray(

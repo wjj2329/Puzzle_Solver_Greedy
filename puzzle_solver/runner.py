@@ -21,11 +21,17 @@ from .scoring import calculateScores, finalizeScores
 from .tiling import breakUpImage, saveSegmentImagesAsync
 
 
+def printTiming(label, started_at, show_progress):
+    if show_progress:
+        print(f"{label} took: {time.perf_counter() - started_at:.3f} secs")
+
+
 def main(argv=None):
     args = parseArguments(argv)
-    start_time = time.time()
+    start_time = time.perf_counter()
     picture_file_name = args.image
     length = args.piece_size
+    phase_started = time.perf_counter()
     image = iio.imread(picture_file_name)
     if args.color_type == ColorType.LAB:
         image = color.rgb2lab(image)
@@ -37,14 +43,19 @@ def main(argv=None):
         output_dir=args.output_dir,
         score_storage=args.score_storage,
     )
+    printTiming("Image preparation", phase_started, args.show_progress)
     segment_save_batch = None
     if args.save_segments:
+        phase_started = time.perf_counter()
         segment_save_batch = saveSegmentImagesAsync(
             segment_list,
             args.color_type,
             args.output_dir,
         )
+        printTiming("Started segment image writes",
+                    phase_started, args.show_progress)
     try:
+        phase_started = time.perf_counter()
         calculateScores(
             segment_list,
             args.score_algorithm,
@@ -52,14 +63,18 @@ def main(argv=None):
             args.score_workers,
             args.score_executor,
         )
+        printTiming("Score calculation", phase_started, args.show_progress)
 
+        phase_started = time.perf_counter()
         finalizeScores(segment_list, args.score_algorithm, args.score_mode)
+        printTiming("Score finalization", phase_started, args.show_progress)
     finally:
         if segment_save_batch is not None:
+            phase_started = time.perf_counter()
             segment_save_batch.wait()
-    elapsed_time_secs = time.time() - start_time
-    if args.show_progress:
-        print("Score preparation took: %s secs " % elapsed_time_secs)
+            printTiming("Finished segment image writes",
+                        phase_started, args.show_progress)
+    printTiming("Score preparation", start_time, args.show_progress)
     window, w = None, None
     if args.show_animation:
         import tkinter
@@ -77,19 +92,24 @@ def main(argv=None):
     original_size = len(segment_list)
     root = None
     if args.connect_best_buddy_first:
+        phase_started = time.perf_counter()
         connectBestBudsFirst(segment_list, original_size, args.show_progress)
+        printTiming("Best-buddy setup", phase_started, args.show_progress)
     if args.assembly_type == AssemblyType.PRIM:
         root = findBestRootSegment(segment_list)
     kruskal_queue = None
     if (
             args.assembly_type == AssemblyType.KRUSKAL
             and args.use_kruskal_priority_queue):
+        phase_started = time.perf_counter()
         kruskal_queue = KruskalConnectionPriorityQueue(
             segment_list,
             args.boost_big_piece_priority,
             args.compare_type,
             args.compare_type,
         )
+        printTiming("Kruskal queue build", phase_started, args.show_progress)
+    assembly_started = time.perf_counter()
     while len(segment_list) > 1:
         best_connection = None
         if args.assembly_type == AssemblyType.KRUSKAL:
@@ -139,12 +159,15 @@ def main(argv=None):
                 "first-to-second ratio",
                 ratio,
                 "elapsed",
-                time.time() - start_time,
+                time.perf_counter() - start_time,
             )
         round_number += 1
+    printTiming("Assembly", assembly_started, args.show_progress)
 
     if args.trim_fill:
+        phase_started = time.perf_counter()
         final_connection = trimAndFillAssembly(segment_list, args.show_progress)
+        printTiming("Trim/fill", phase_started, args.show_progress)
         if final_connection is not None and args.save_assembly:
             image_name = saveImage(
                 final_connection,
@@ -161,6 +184,4 @@ def main(argv=None):
                 w.pack(side="bottom", fill="both", expand="no")
                 window.update()
 
-    if args.show_progress:
-        elapsed_time_secs = time.time() - start_time
-        print("Execution took: %s secs " % elapsed_time_secs)
+    printTiming("Execution", start_time, args.show_progress)

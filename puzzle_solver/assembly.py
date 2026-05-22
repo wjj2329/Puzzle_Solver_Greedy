@@ -162,18 +162,36 @@ def findBestRootSegment(segment_list):
     return random.choice(segment_list)
 
 
-def findBestBuddyConnection(segment, segment_list):
-    segment_is_single_piece = isSinglePiece(segment)
+def findBestBuddyConnection(segment, segment_list, single_piece_by_segment=None):
+    if single_piece_by_segment is None:
+        segment_is_single_piece = isSinglePiece(segment)
+    else:
+        segment_is_single_piece = single_piece_by_segment[segment]
     best_so_far = BestConnection()
     for segment2 in segment_list:
         if segment != segment2:
-            if segment_is_single_piece and isSinglePiece(segment2):
-                temp = calculateSinglePieceConnection(segment, segment2)
+            if single_piece_by_segment is None:
+                segment2_is_single_piece = isSinglePiece(segment2)
+            else:
+                segment2_is_single_piece = single_piece_by_segment[segment2]
+            if segment_is_single_piece and segment2_is_single_piece:
+                best_direction, score, second_best_score = (
+                    singlePieceBestDirection(segment, segment2)
+                )
+                if score < best_so_far.score:
+                    best_so_far = buildSinglePieceConnection(
+                        segment,
+                        segment2,
+                        best_direction,
+                        score,
+                        second_best_score,
+                    )
             else:
                 segment.best_connection_found_so_far = BestConnection()
                 temp = segment.calculateConnectionsKruskal(segment2, False)
-            if temp.isBetterConnection(best_so_far, CompareWithOtherSegments.ONLY_BEST):
-                best_so_far = temp
+                if temp.isBetterConnection(
+                        best_so_far, CompareWithOtherSegments.ONLY_BEST):
+                    best_so_far = temp
     return best_so_far
 
 
@@ -185,25 +203,50 @@ def isSinglePiece(segment):
 
 
 def calculateSinglePieceConnection(segment, compare_segment):
-    direction_scores = [
-        (
-            direction,
-            segment.score_dict[
-                segment.piece_number,
-                direction,
-                compare_segment.piece_number,
-            ],
-        )
-        for direction in JoinDirection
-    ]
-    direction_scores.sort(key=lambda item: item[1])
-    best_direction, best_score = direction_scores[0]
-    second_best_score = (
-        direction_scores[1][1]
-        if len(direction_scores) > 1
-        else best_score
+    best_direction, best_score, second_best_score = singlePieceBestDirection(
+        segment,
+        compare_segment,
+    )
+    return buildSinglePieceConnection(
+        segment,
+        compare_segment,
+        best_direction,
+        best_score,
+        second_best_score,
     )
 
+
+def singlePieceBestDirection(segment, compare_segment):
+    score_dict = segment.score_dict
+    segment_piece_number = segment.piece_number
+    compare_piece_number = compare_segment.piece_number
+    best_direction = None
+    best_score = None
+    second_best_score = float("inf")
+
+    for direction in JoinDirection:
+        score = score_dict[
+            segment_piece_number,
+            direction,
+            compare_piece_number,
+        ]
+        if best_score is None or score < best_score:
+            if best_score is not None:
+                second_best_score = best_score
+            best_direction = direction
+            best_score = score
+        elif score < second_best_score:
+            second_best_score = score
+
+    return best_direction, best_score, second_best_score
+
+
+def buildSinglePieceConnection(
+        segment,
+        compare_segment,
+        best_direction,
+        best_score,
+        second_best_score):
     if best_direction == JoinDirection.UP:
         pic_connection_matrix = np.asarray(
             [[compare_segment], [segment]], dtype=object)
@@ -234,8 +277,16 @@ def calculateSinglePieceConnection(segment, compare_segment):
 
 def connectBestBudsFirst(segment_list, original_size, show_progress=True):
     candidates = list(segment_list)
+    single_piece_by_segment = {
+        segment: isSinglePiece(segment)
+        for segment in candidates
+    }
     best_by_segment = {
-        segment: findBestBuddyConnection(segment, candidates)
+        segment: findBestBuddyConnection(
+            segment,
+            candidates,
+            single_piece_by_segment,
+        )
         for segment in candidates
     }
     active_segments = set(segment_list)
