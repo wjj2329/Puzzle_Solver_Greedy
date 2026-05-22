@@ -22,6 +22,11 @@ def euclideanDistance(a, b):
     return float(np.linalg.norm(diff, axis=1).sum())
 
 
+def euclideanDistances(edge, compare_edges):
+    diff = edge[np.newaxis, :, :] - compare_edges
+    return np.sqrt(np.sum(diff * diff, axis=2)).sum(axis=1)
+
+
 def mahalanobisEdgeDistance(own_edge, compare_edge):
     matrix = (own_edge.edge - compare_edge.edge) - own_edge.average_delta
     matrix2 = (compare_edge.edge - own_edge.edge) - compare_edge.average_delta
@@ -31,6 +36,38 @@ def mahalanobisEdgeDistance(own_edge, compare_edge):
     scores2 = np.einsum(
         "ij,jk,ik->i", matrix2, own_edge.inverse_covariance, matrix2)
     return float(np.sqrt(np.abs(scores)).sum() + np.sqrt(np.abs(scores2)).sum())
+
+
+def mahalanobisEdgeDistances(
+        edge,
+        average_delta,
+        inverse_covariance,
+        compare_edges,
+        compare_average_deltas,
+        compare_inverse_covariances):
+    matrix = (edge[np.newaxis, :, :] - compare_edges) - average_delta
+    matrix2 = (
+        compare_edges
+        - edge[np.newaxis, :, :]
+        - compare_average_deltas[:, np.newaxis, :]
+    )
+
+    scores = np.einsum(
+        "mij,mjk,mik->mi",
+        matrix,
+        compare_inverse_covariances,
+        matrix,
+    )
+    scores2 = np.einsum(
+        "mij,jk,mik->mi",
+        matrix2,
+        inverse_covariance,
+        matrix2,
+    )
+    return (
+        np.sqrt(np.abs(scores)).sum(axis=1)
+        + np.sqrt(np.abs(scores2)).sum(axis=1)
+    )
 
 
 def mgcDirectionalDistance(source_edge, target_edge):
@@ -49,4 +86,36 @@ def mgcEdgeDistance(own_edge, compare_edge):
     return (
         mgcDirectionalDistance(own_edge, compare_edge)
         + mgcDirectionalDistance(compare_edge, own_edge)
+    )
+
+
+def mgcEdgeDistances(
+        edge,
+        gradient_average,
+        gradient_inverse_covariance,
+        compare_edges,
+        compare_gradient_averages,
+        compare_gradient_inverse_covariances):
+    centered = compare_edges - edge[np.newaxis, :, :] - gradient_average
+    scores = np.einsum(
+        "mij,jk,mik->mi",
+        centered,
+        gradient_inverse_covariance,
+        centered,
+    )
+
+    centered2 = (
+        edge[np.newaxis, :, :]
+        - compare_edges
+        - compare_gradient_averages[:, np.newaxis, :]
+    )
+    scores2 = np.einsum(
+        "mij,mjk,mik->mi",
+        centered2,
+        compare_gradient_inverse_covariances,
+        centered2,
+    )
+    return (
+        np.maximum(scores, 0.0).sum(axis=1)
+        + np.maximum(scores2, 0.0).sum(axis=1)
     )

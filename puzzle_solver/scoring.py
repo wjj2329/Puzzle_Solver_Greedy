@@ -3,10 +3,15 @@ import os
 
 import numpy as np
 
+from .distances import (
+    euclideanDistances,
+    mahalanobisEdgeDistances,
+    mgcEdgeDistances,
+)
 from .enums import ScoreAlgorithm, ScoreMode
 from .models import ScorePayload
 from .score_helpers import (
-    appendScorePayloadPairArrayValues,
+    JOIN_EDGE_PAIR_INDICES,
     scoreComponentCount,
     scorePayloadPair,
 )
@@ -14,12 +19,14 @@ from .score_helpers import (
 
 _SCORE_PAYLOADS = None
 _SCORE_ALGORITHM = None
+_SCORE_PAYLOAD_ARRAYS = None
 
 
 def initializeScoreWorker(score_payloads, score_algorithm):
-    global _SCORE_PAYLOADS, _SCORE_ALGORITHM
+    global _SCORE_PAYLOADS, _SCORE_ALGORITHM, _SCORE_PAYLOAD_ARRAYS
     _SCORE_PAYLOADS = score_payloads
     _SCORE_ALGORITHM = score_algorithm
+    _SCORE_PAYLOAD_ARRAYS = None
 
 
 def scoreEntriesForPayloadIndex(index):
@@ -41,51 +48,220 @@ def scoreArraysForPayloadIndex(index):
     return scoreArraysForPayloadRange(index, index + 1)
 
 
+def scoreArrayEntryCount(start, stop):
+    payload_count = len(_SCORE_PAYLOADS)
+    return sum(
+        max(payload_count - index - 1, 0) * 8
+        for index in range(start, stop)
+    )
+
+
+def scorePayloadArrayCache():
+    global _SCORE_PAYLOAD_ARRAYS
+    if _SCORE_PAYLOAD_ARRAYS is None:
+        _SCORE_PAYLOAD_ARRAYS = buildScorePayloadArrayCache(_SCORE_PAYLOADS)
+    return _SCORE_PAYLOAD_ARRAYS
+
+
+def buildScorePayloadArrayCache(score_payloads):
+    return {
+        "piece_numbers": np.asarray(
+            [payload.piece_number for payload in score_payloads],
+            dtype=np.int32,
+        ),
+        "own": buildEdgeArrayCache(score_payloads, "own_edges"),
+        "compare": buildEdgeArrayCache(score_payloads, "compare_edges"),
+    }
+
+
+def buildEdgeArrayCache(score_payloads, edge_attribute):
+    edge_cache = {}
+    for direction, _compare_direction, _direction_index, _opposite_index in (
+            JOIN_EDGE_PAIR_INDICES):
+        if direction in edge_cache:
+            continue
+        edges = [
+            getattr(payload, edge_attribute)[direction]
+            for payload in score_payloads
+        ]
+        edge_cache[direction] = {
+            "edge": np.asarray([edge.edge for edge in edges], dtype=np.float64),
+            "average_delta": np.asarray(
+                [edge.average_delta for edge in edges],
+                dtype=np.float64,
+            ),
+            "inverse_covariance": np.asarray(
+                [edge.inverse_covariance for edge in edges],
+                dtype=np.float64,
+            ),
+            "gradient_average": np.asarray(
+                [edge.gradient_average for edge in edges],
+                dtype=np.float64,
+            ),
+            "gradient_inverse_covariance": np.asarray(
+                [edge.gradient_inverse_covariance for edge in edges],
+                dtype=np.float64,
+            ),
+        }
+    return edge_cache
+
+
 def scoreArraysForPayloadRange(start, stop):
+    payload_arrays = scorePayloadArrayCache()
     component_count = scoreComponentCount(_SCORE_ALGORITHM)
-    own_numbers = []
-    direction_indices = []
-    join_numbers = []
-    if component_count == 1:
-        scores = []
-    else:
-        scores = ([], [])
+    entry_count = scoreArrayEntryCount(start, stop)
+    own_numbers = np.empty(entry_count, dtype=np.int32)
+    direction_indices = np.empty(entry_count, dtype=np.int8)
+    join_numbers = np.empty(entry_count, dtype=np.int32)
+    score_values = np.empty((entry_count, component_count), dtype=np.float64)
 
     cursor = 0
     for index in range(start, stop):
-        segment1 = _SCORE_PAYLOADS[index]
-        for segment2 in _SCORE_PAYLOADS[index+1:]:
-            cursor = appendScorePayloadPairArrayValues(
-                segment1,
-                segment2,
-                _SCORE_ALGORITHM,
-                own_numbers,
-                direction_indices,
-                join_numbers,
-                scores,
-                cursor,
-            )
-
-    own_numbers = np.asarray(own_numbers, dtype=np.int32)
-    direction_indices = np.asarray(direction_indices, dtype=np.int8)
-    join_numbers = np.asarray(join_numbers, dtype=np.int32)
-    if component_count == 1:
-        score_values = np.asarray(scores, dtype=np.float64).reshape(-1, 1)
-    else:
-        score_values = np.empty(
-            (len(own_numbers), component_count),
-            dtype=np.float64,
+        cursor = writeScoreArraysForPayloadIndex(
+            payload_arrays,
+            index,
+            _SCORE_ALGORITHM,
+            own_numbers,
+            direction_indices,
+            join_numbers,
+            score_values,
+            cursor,
         )
-        score_values[:, 0] = scores[0]
-        score_values[:, 1] = scores[1]
 
     return (
+        own_numbers[:cursor],
+        direction_indices[:cursor],
+        join_numbers[:cursor],
+        score_values[:cursor],
+        component_count == 1,
+    )
+
+
+def writeScoreArraysForPayloadIndex(
+        payload_arrays,
+        index,
+        score_algorithm,
         own_numbers,
         direction_indices,
         join_numbers,
         score_values,
-        component_count == 1,
-    )
+        cursor):
+    piece_numbers = payload_arrays["piece_numbers"]
+    remaining_start = index + 1
+    if remaining_start >= len(piece_numbers):
+        return cursor
+
+    join_piece_numbers = piece_numbers[remaining_start:]
+    own_number = piece_numbers[index]
+    for (
+            own_direction,
+            compare_direction,
+            direction_index,
+            opposite_direction_index) in JOIN_EDGE_PAIR_INDICES:
+        own_edges = payload_arrays["own"][own_direction]
+        compare_edges = payload_arrays["compare"][compare_direction]
+        component_scores = scoreComponentsForDirection(
+            score_algorithm,
+            own_edges,
+            compare_edges,
+            index,
+            remaining_start,
+        )
+        cursor = writeReciprocalScoreArrays(
+            own_numbers,
+            direction_indices,
+            join_numbers,
+            score_values,
+            cursor,
+            own_number,
+            join_piece_numbers,
+            direction_index,
+            opposite_direction_index,
+            component_scores,
+        )
+    return cursor
+
+
+def scoreComponentsForDirection(
+        score_algorithm,
+        own_edges,
+        compare_edges,
+        index,
+        remaining_start):
+    if score_algorithm == ScoreAlgorithm.EUCLIDEAN:
+        return (
+            euclideanDistances(
+                own_edges["edge"][index],
+                compare_edges["edge"][remaining_start:],
+            ),
+        )
+    if score_algorithm == ScoreAlgorithm.MAHALANOBIS:
+        return (
+            mahalanobisEdgeDistances(
+                own_edges["edge"][index],
+                own_edges["average_delta"][index],
+                own_edges["inverse_covariance"][index],
+                compare_edges["edge"][remaining_start:],
+                compare_edges["average_delta"][remaining_start:],
+                compare_edges["inverse_covariance"][remaining_start:],
+            ),
+        )
+    if score_algorithm == ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS:
+        return (
+            mahalanobisEdgeDistances(
+                own_edges["edge"][index],
+                own_edges["average_delta"][index],
+                own_edges["inverse_covariance"][index],
+                compare_edges["edge"][remaining_start:],
+                compare_edges["average_delta"][remaining_start:],
+                compare_edges["inverse_covariance"][remaining_start:],
+            ),
+            euclideanDistances(
+                own_edges["edge"][index],
+                compare_edges["edge"][remaining_start:],
+            ),
+        )
+    if score_algorithm == ScoreAlgorithm.MGC:
+        return (
+            mgcEdgeDistances(
+                own_edges["edge"][index],
+                own_edges["gradient_average"][index],
+                own_edges["gradient_inverse_covariance"][index],
+                compare_edges["edge"][remaining_start:],
+                compare_edges["gradient_average"][remaining_start:],
+                compare_edges["gradient_inverse_covariance"][remaining_start:],
+            ),
+        )
+    return ()
+
+
+def writeReciprocalScoreArrays(
+        own_numbers,
+        direction_indices,
+        join_numbers,
+        score_values,
+        cursor,
+        own_number,
+        join_piece_numbers,
+        direction_index,
+        opposite_direction_index,
+        component_scores):
+    candidate_count = len(join_piece_numbers)
+    stop = cursor + candidate_count
+    own_numbers[cursor:stop] = own_number
+    direction_indices[cursor:stop] = direction_index
+    join_numbers[cursor:stop] = join_piece_numbers
+    for component_index, scores in enumerate(component_scores):
+        score_values[cursor:stop, component_index] = scores
+    cursor = stop
+
+    stop = cursor + candidate_count
+    own_numbers[cursor:stop] = join_piece_numbers
+    direction_indices[cursor:stop] = opposite_direction_index
+    join_numbers[cursor:stop] = own_number
+    for component_index, scores in enumerate(component_scores):
+        score_values[cursor:stop, component_index] = scores
+    return stop
 
 
 def chunkRanges(length, max_chunks):

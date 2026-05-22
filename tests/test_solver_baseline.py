@@ -3,6 +3,7 @@ import io
 import math
 import sys
 import unittest
+from collections import defaultdict
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -697,6 +698,8 @@ class ScoreTests(unittest.TestCase):
         )
 
         for score_algorithm in (
+                solver.ScoreAlgorithm.EUCLIDEAN,
+                solver.ScoreAlgorithm.MAHALANOBIS,
                 solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
                 solver.ScoreAlgorithm.MGC):
             with self.subTest(score_algorithm=score_algorithm):
@@ -1257,6 +1260,47 @@ class KruskalAssemblyTests(unittest.TestCase):
         self.assertEqual(scan_history, queue_history)
         self.assertEqual(len(scan_history), queue_rounds)
         self.assertEqual(len(scan_segments), len(queue_segments))
+
+    def test_kruskal_connection_preserves_pieces_in_component_holes(self):
+        score_dict = defaultdict(lambda: 100.0)
+        connections_dict = {}
+        segments = [
+            solver.Segment(
+                np.zeros((2, 2, 3)),
+                max_width=4,
+                max_height=4,
+                piece_number=piece_number,
+                component_id=piece_number,
+                score_dict=score_dict,
+                connections_dict=connections_dict,
+            )
+            for piece_number in range(1, 5)
+        ]
+        first, second, third, fourth = segments
+        first.pic_connection_matrix = np.asarray(
+            [[first, second], [0, third]], dtype=object)
+        first.binary_connection_matrix = np.asarray([[1, 1], [0, 1]])
+        score_dict[
+            first.piece_number,
+            solver.JoinDirection.DOWN,
+            fourth.piece_number,
+        ] = 1.0
+        score_dict[
+            third.piece_number,
+            solver.JoinDirection.LEFT,
+            fourth.piece_number,
+        ] = 1.0
+
+        first.best_connection_found_so_far = solver.BestConnection()
+        connection = first.calculateConnectionsKruskal(fourth, False)
+        connection.stripZeros()
+        connection_matrix = tuple(
+            tuple(0 if cell == 0 else cell.piece_number for cell in row)
+            for row in connection.pic_connection_matrix
+        )
+
+        self.assertEqual(1.0, connection.score)
+        self.assertEqual(((1, 2), (4, 3)), connection_matrix)
 
 
 if __name__ == "__main__":

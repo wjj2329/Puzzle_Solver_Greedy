@@ -33,13 +33,14 @@ def time_score_run(
         executor_type,
         workers,
         score_storage,
+        score_algorithm,
         score_mode):
     segments = build_segments(image_size, piece_size, seed, score_storage)
     started = time.perf_counter()
     with contextlib.redirect_stdout(io.StringIO()):
         Solver.calculateScores(
             segments,
-            Solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
+            score_algorithm,
             show_progress=False,
             max_workers=workers,
             executor_type=executor_type,
@@ -48,7 +49,7 @@ def time_score_run(
     started = time.perf_counter()
     Solver.finalizeScores(
         segments,
-        Solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
+        score_algorithm,
         score_mode,
     )
     finalize_elapsed = time.perf_counter() - started
@@ -66,6 +67,11 @@ def main():
         default="dense",
     )
     parser.add_argument(
+        "--score-algorithm",
+        choices=tuple(item.name.lower() for item in Solver.ScoreAlgorithm),
+        default="euclidean_and_mahalanobis",
+    )
+    parser.add_argument(
         "--score-mode",
         choices=("dissimilarity", "reliability"),
         default="dissimilarity",
@@ -77,11 +83,13 @@ def main():
         help="Executor runs as executor:workers, for example serial:1 process:8",
     )
     args = parser.parse_args()
+    score_algorithm = Solver.ScoreAlgorithm[args.score_algorithm.upper()]
     score_mode = Solver.ScoreMode[args.score_mode.upper()]
 
     segment_count = (args.image_size // args.piece_size) ** 2
     print(f"segments: {segment_count}")
     print(f"score_storage: {args.score_storage}")
+    print(f"score_algorithm: {args.score_algorithm}")
     print(f"score_mode: {args.score_mode}")
     for run in args.runs:
         executor_type, workers_text = run.split(":", 1)
@@ -93,6 +101,7 @@ def main():
             executor_type,
             workers,
             args.score_storage,
+            score_algorithm,
             score_mode,
         )
         print(

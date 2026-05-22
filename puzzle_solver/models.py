@@ -2,10 +2,8 @@ import sys
 from copy import copy
 
 import numpy as np
-from numpy import argwhere, asarray, delete, logical_and, nonzero, zeros
+from numpy import argwhere, asarray, delete, nonzero, zeros
 from numpy import all as numpy_all
-from numpy import sum as numpy_sum
-from scipy.ndimage import binary_dilation
 
 from .distances import (
     MGC_DUMMY_GRADIENTS,
@@ -95,6 +93,7 @@ class Segment:
         self.connections_dict = connections_dict
         self._own_score_edges = None
         self._compare_score_edges = None
+        self._kruskal_component_data = None
 
     def __add__(self, other):
         if type(self) is Segment:
@@ -375,80 +374,191 @@ class Segment:
     def calculateConnectionsKruskal(self, compare_segment, boost_priority_of_big_pieces_joining):
         if (self.component_id, compare_segment.component_id) in self.connections_dict:
             return self.connections_dict[(self.component_id, compare_segment.component_id)]
-        checkCompatibility = self.checkCompatibility
         score_dict = self.score_dict
         best_connection_found_so_far = self.best_connection_found_so_far
-        own_binary_connection_matrix = self.binary_connection_matrix
-        compare_segment_binary_connection_matrix = compare_segment.binary_connection_matrix
-        own_pic_connection_matrix = self.pic_connection_matrix
-        compare_segment_pic_connection_matrix = compare_segment.pic_connection_matrix
-        h1 = own_binary_connection_matrix.shape[0]
-        w1 = own_binary_connection_matrix.shape[1]
-        h2 = compare_segment_binary_connection_matrix.shape[0]
-        w2 = compare_segment_binary_connection_matrix.shape[1]
+        own_data = self.kruskalComponentData()
+        compare_data = compare_segment.kruskalComponentData()
+        h1 = own_data["height"]
+        w1 = own_data["width"]
+        h2 = compare_data["height"]
+        w2 = compare_data["width"]
         height_padded = h1+2*h2
         width_padded = w1+2*w2
-        height_combined = h2+h1
-        width_combined = w2+w1
         max_height = self.max_height
         max_width = self.max_width
-        pad_with_piece1 = zeros((height_padded, width_padded))
-        pad_with_piece1[h2:height_combined, w2:(
-            width_combined)] = own_binary_connection_matrix
-        neighboring_connections = binary_dilation(
-            input=pad_with_piece1, structure=self.dilation_mask) - pad_with_piece1
-        neighboring_connections_shape = neighboring_connections.shape
-        padded1_pointer = zeros(
-            (height_padded, width_padded), dtype="object")
-        padded1_pointer[h2:(height_combined), w2:(
-                        width_combined)] = own_pic_connection_matrix
-        store = nonzero(pad_with_piece1)
-        for x in range(height_padded-(h2-1)):
-            for y in range(width_padded-(w2-1)):
-                pad_with_piece2 = zeros(neighboring_connections_shape)
-                pad_with_piece2[x:(x+h2), y:(y+w2)
-                                ] = compare_segment_binary_connection_matrix
-                if not numpy_sum(logical_and(
-                        neighboring_connections, pad_with_piece2)[:]) > 0:
-                    continue
-                if numpy_sum(logical_and(
-                        pad_with_piece1, pad_with_piece2)[:]) > 0:
-                    continue
-                combined_pieces = pad_with_piece1+pad_with_piece2
-                if checkCompatibility(combined_pieces, max_height, max_width):
-                    score = 0
-                    comparison_count = 0
-                    temp_pointer = zeros(
-                        (height_padded, width_padded), dtype="object")
+        own_positions_padded = tuple(
+            (row+h2, col+w2)
+            for row, col in own_data["positions"]
+        )
+        own_position_set = set(own_positions_padded)
+        own_piece_numbers = {
+            (row+h2, col+w2): piece_number
+            for (row, col), piece_number in own_data["piece_by_position"].items()
+        }
 
-                    temp_pointer[x:(h2+x), y:(w2+y)
-                                 ] = compare_segment_pic_connection_matrix
-                    combined_pointer = temp_pointer+padded1_pointer
-                    for d, h in zip(store[0], store[1]):
-                        node1 = combined_pointer[d, h].piece_number
-                        if pad_with_piece2[d][h+1] == 1:
-                            comparison_count += 1
-                            score += score_dict[node1,
-                                                JoinDirection.RIGHT, combined_pointer[d, h+1].piece_number]
-                        if pad_with_piece2[d][h-1] == 1:
-                            comparison_count += 1
-                            score += score_dict[node1,
-                                                JoinDirection.LEFT, combined_pointer[d, h-1].piece_number]
-                        if pad_with_piece2[d+1][h] == 1:
-                            comparison_count += 1
-                            score += score_dict[node1,
-                                                JoinDirection.DOWN, combined_pointer[d+1, h].piece_number]
-                        if pad_with_piece2[d-1][h] == 1:
-                            comparison_count += 1
-                            score += score_dict[node1,
-                                                JoinDirection.UP, combined_pointer[d-1, h].piece_number]
-                    if boost_priority_of_big_pieces_joining:
-                        score = score/((comparison_count*comparison_count)*0.5)
-                    else:
-                        score = score/comparison_count
-                    if score < best_connection_found_so_far.score:
-                        best_connection_found_so_far.setConnection(
-                            combined_pointer, compare_segment, score, self, combined_pieces)
+        for x, y in self.kruskalCandidateOffsets(
+                own_data,
+                compare_data,
+                h2,
+                w2,
+                height_padded,
+                width_padded):
+            compare_piece_numbers = {
+                (row+x, col+y): piece_number
+                for (row, col), piece_number
+                in compare_data["piece_by_position"].items()
+            }
+            if any(position in own_position_set
+                   for position in compare_piece_numbers):
+                continue
+            if not self.kruskalPlacementFits(
+                    own_data,
+                    compare_data,
+                    x,
+                    y,
+                    h2,
+                    w2,
+                    max_height,
+                    max_width):
+                continue
+
+            score = 0
+            comparison_count = 0
+            for row, col in own_positions_padded:
+                node1 = own_piece_numbers[row, col]
+                adjacent_piece = compare_piece_numbers.get((row, col+1))
+                if adjacent_piece is not None:
+                    comparison_count += 1
+                    score += score_dict[node1, JoinDirection.RIGHT, adjacent_piece]
+                adjacent_piece = compare_piece_numbers.get((row, col-1))
+                if adjacent_piece is not None:
+                    comparison_count += 1
+                    score += score_dict[node1, JoinDirection.LEFT, adjacent_piece]
+                adjacent_piece = compare_piece_numbers.get((row+1, col))
+                if adjacent_piece is not None:
+                    comparison_count += 1
+                    score += score_dict[node1, JoinDirection.DOWN, adjacent_piece]
+                adjacent_piece = compare_piece_numbers.get((row-1, col))
+                if adjacent_piece is not None:
+                    comparison_count += 1
+                    score += score_dict[node1, JoinDirection.UP, adjacent_piece]
+            if comparison_count == 0:
+                continue
+            if boost_priority_of_big_pieces_joining:
+                score = score/((comparison_count*comparison_count)*0.5)
+            else:
+                score = score/comparison_count
+            if score < best_connection_found_so_far.score:
+                combined_pieces = zeros((height_padded, width_padded))
+                combined_pointer = zeros(
+                    (height_padded, width_padded), dtype="object")
+                for row, col in own_data["positions"]:
+                    combined_row = row+h2
+                    combined_col = col+w2
+                    combined_pieces[combined_row, combined_col] = 1
+                    combined_pointer[combined_row, combined_col] = (
+                        own_data["pic_matrix"][row, col]
+                    )
+                for row, col in compare_data["positions"]:
+                    combined_row = row+x
+                    combined_col = col+y
+                    combined_pieces[combined_row, combined_col] = 1
+                    combined_pointer[combined_row, combined_col] = (
+                        compare_data["pic_matrix"][row, col]
+                    )
+                best_connection_found_so_far.setConnection(
+                    combined_pointer,
+                    compare_segment,
+                    score,
+                    self,
+                    combined_pieces,
+                )
         self.connections_dict[(
             self.component_id, compare_segment.component_id)] = best_connection_found_so_far
         return best_connection_found_so_far
+
+    def kruskalComponentData(self):
+        cached = self._kruskal_component_data
+        if cached is not None and cached["component_id"] == self.component_id:
+            return cached
+
+        binary_matrix = self.binary_connection_matrix
+        pic_matrix = self.pic_connection_matrix
+        rows, cols = nonzero(binary_matrix)
+        positions = tuple(
+            (int(row), int(col))
+            for row, col in zip(rows, cols)
+        )
+        position_set = set(positions)
+        boundary_positions = set()
+        for row, col in positions:
+            for row_delta, col_delta in (
+                    (0, 1),
+                    (0, -1),
+                    (1, 0),
+                    (-1, 0)):
+                neighbor = (row+row_delta, col+col_delta)
+                if neighbor not in position_set:
+                    boundary_positions.add(neighbor)
+
+        self._kruskal_component_data = {
+            "component_id": self.component_id,
+            "pic_matrix": pic_matrix,
+            "height": binary_matrix.shape[0],
+            "width": binary_matrix.shape[1],
+            "positions": positions,
+            "piece_by_position": {
+                position: pic_matrix[position].piece_number
+                for position in positions
+            },
+            "boundary_positions": tuple(sorted(boundary_positions)),
+            "min_row": min(row for row, _col in positions),
+            "max_row": max(row for row, _col in positions),
+            "min_col": min(col for _row, col in positions),
+            "max_col": max(col for _row, col in positions),
+        }
+        return self._kruskal_component_data
+
+    def kruskalCandidateOffsets(
+            self,
+            own_data,
+            compare_data,
+            own_row_offset,
+            own_col_offset,
+            height_padded,
+            width_padded):
+        max_x = height_padded - compare_data["height"]
+        max_y = width_padded - compare_data["width"]
+        offsets = set()
+        for neighbor_row, neighbor_col in own_data["boundary_positions"]:
+            padded_neighbor_row = neighbor_row + own_row_offset
+            padded_neighbor_col = neighbor_col + own_col_offset
+            for compare_row, compare_col in compare_data["positions"]:
+                x = padded_neighbor_row - compare_row
+                y = padded_neighbor_col - compare_col
+                if 0 <= x <= max_x and 0 <= y <= max_y:
+                    offsets.add((x, y))
+        return sorted(offsets)
+
+    def kruskalPlacementFits(
+            self,
+            own_data,
+            compare_data,
+            x,
+            y,
+            own_row_offset,
+            own_col_offset,
+            max_height,
+            max_width):
+        min_row = min(own_row_offset + own_data["min_row"],
+                      x + compare_data["min_row"])
+        max_row = max(own_row_offset + own_data["max_row"],
+                      x + compare_data["max_row"])
+        min_col = min(own_col_offset + own_data["min_col"],
+                      y + compare_data["min_col"])
+        max_col = max(own_col_offset + own_data["max_col"],
+                      y + compare_data["max_col"])
+        return not (
+            max_col-min_col > max_height
+            or max_row-min_row > max_width
+        )
