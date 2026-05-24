@@ -84,6 +84,7 @@ class KruskalConnectionPriorityQueue:
                 continue
             if join_segment.component_id != join_component_id:
                 continue
+            own_segment.materializeKruskalConnection(connection)
             return connection
         return BestConnection()
 
@@ -92,8 +93,9 @@ class KruskalConnectionPriorityQueue:
         connection = segment1.calculateConnectionsKruskal(
             segment2,
             self.boost_priority_of_big_pieces_joining,
+            defer_connection_matrices=True,
         )
-        if connection.pic_connection_matrix is None:
+        if not connection.hasConnection():
             return
         heapq.heappush(
             self._heap,
@@ -315,6 +317,7 @@ def connectBestBudsFirst(segment_list, original_size, show_progress=True):
 
 
 def joinPieces(best_connection, segment_list, original_size):
+    best_connection.own_segment.materializeKruskalConnection(best_connection)
     best_connection.stripZeros()
     best_connection.own_segment.binary_connection_matrix = best_connection.binary_connection_matrix
     best_connection.own_segment.pic_connection_matrix = best_connection.pic_connection_matrix

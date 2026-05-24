@@ -25,6 +25,7 @@ class DenseScoreTable:
         self._values = np.full(shape + (1,), np.nan, dtype=np.float64)
         self._filled = np.zeros(shape, dtype=bool)
         self._scalar = np.ones(shape, dtype=bool)
+        self._all_scalar = True
         self._extra = {}
 
     def _scoreIndices(self, key):
@@ -79,6 +80,8 @@ class DenseScoreTable:
             self._values[indices + (slice(len(components), None),)] = np.nan
         self._filled[indices] = True
         self._scalar[indices] = is_scalar
+        if not is_scalar:
+            self._all_scalar = False
 
     def __getitem__(self, key):
         indices = self._scoreIndices(key)
@@ -103,6 +106,11 @@ class DenseScoreTable:
             for value
             in self._values[own_number, direction_index, join_number, :component_count]
         )
+
+    def scalarScoreValues(self):
+        if not self._all_scalar:
+            return None
+        return self._values[..., 0]
 
     def __contains__(self, key):
         indices = self._scoreIndices(key)
@@ -206,6 +214,8 @@ class DenseScoreTable:
             ] = np.nan
         self._filled[own_numbers, direction_indices, join_numbers] = True
         self._scalar[own_numbers, direction_indices, join_numbers] = first_is_scalar
+        if not first_is_scalar:
+            self._all_scalar = False
 
     def _setManyOneByOne(self, entries):
         for key, score in entries:
@@ -245,6 +255,8 @@ class DenseScoreTable:
             ] = np.nan
         self._filled[own_numbers, direction_indices, join_numbers] = True
         self._scalar[own_numbers, direction_indices, join_numbers] = is_scalar
+        if not is_scalar:
+            self._all_scalar = False
 
     def normalizeCombinedScores(self):
         if self._values.shape[-1] < 2:
@@ -274,6 +286,7 @@ class DenseScoreTable:
             component_values = self._values[..., component_index]
             component_values[mask] = np.nan
         self._scalar[mask] = True
+        self._all_scalar = True
 
     def applyReliabilityScores(self):
         score_values = self._values[..., 0]
@@ -293,6 +306,7 @@ class DenseScoreTable:
                 )
                 score_values[own_number, direction_index, mask] = updated_scores
                 self._scalar[own_number, direction_index, mask] = True
+        self._all_scalar = True
 
     def _reliabilityScores(self, scores, second_best_score):
         if second_best_score <= 0:

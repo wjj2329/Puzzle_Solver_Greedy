@@ -1271,6 +1271,190 @@ class KruskalAssemblyTests(unittest.TestCase):
             solver.joinPieces(best_connection, segments, original_size)
         return history
 
+    def connection_layout(self, connection):
+        if connection.pic_connection_matrix is None:
+            return None
+        return tuple(
+            tuple(0 if cell == 0 else cell.piece_number for cell in row)
+            for row in connection.pic_connection_matrix
+        )
+
+    def legacy_kruskal_offsets(
+            self,
+            own_data,
+            compare_data,
+            own_row_offset,
+            own_col_offset,
+            height_padded,
+            width_padded):
+        max_x = height_padded - compare_data["height"]
+        max_y = width_padded - compare_data["width"]
+        offsets = set()
+        for neighbor_row, neighbor_col in own_data["boundary_positions"]:
+            padded_neighbor_row = neighbor_row + own_row_offset
+            padded_neighbor_col = neighbor_col + own_col_offset
+            for compare_row, compare_col in compare_data["positions"]:
+                x = padded_neighbor_row - compare_row
+                y = padded_neighbor_col - compare_col
+                if 0 <= x <= max_x and 0 <= y <= max_y:
+                    offsets.add((x, y))
+        return sorted(offsets)
+
+    def legacy_kruskal_connection(self, segment, compare_segment, boost):
+        score_dict = segment.score_dict
+        best = solver.BestConnection()
+        own_data = segment.kruskalComponentData()
+        compare_data = compare_segment.kruskalComponentData()
+        h1 = own_data["height"]
+        w1 = own_data["width"]
+        h2 = compare_data["height"]
+        w2 = compare_data["width"]
+        height_padded = h1 + 2 * h2
+        width_padded = w1 + 2 * w2
+        own_positions_padded = tuple(
+            (row + h2, col + w2)
+            for row, col in own_data["positions"]
+        )
+        own_position_set = set(own_positions_padded)
+        own_piece_numbers = {
+            (row + h2, col + w2): piece_number
+            for (row, col), piece_number
+            in own_data["piece_by_position"].items()
+        }
+
+        for x, y in self.legacy_kruskal_offsets(
+                own_data,
+                compare_data,
+                h2,
+                w2,
+                height_padded,
+                width_padded):
+            compare_piece_numbers = {
+                (row + x, col + y): piece_number
+                for (row, col), piece_number
+                in compare_data["piece_by_position"].items()
+            }
+            if any(position in own_position_set
+                   for position in compare_piece_numbers):
+                continue
+            if not segment.kruskalPlacementFits(
+                    own_data,
+                    compare_data,
+                    x,
+                    y,
+                    h2,
+                    w2,
+                    segment.max_height,
+                    segment.max_width):
+                continue
+
+            score = 0
+            comparison_count = 0
+            for row, col in own_positions_padded:
+                node1 = own_piece_numbers[row, col]
+                adjacent_piece = compare_piece_numbers.get((row, col + 1))
+                if adjacent_piece is not None:
+                    comparison_count += 1
+                    score += score_dict[
+                        node1, solver.JoinDirection.RIGHT, adjacent_piece]
+                adjacent_piece = compare_piece_numbers.get((row, col - 1))
+                if adjacent_piece is not None:
+                    comparison_count += 1
+                    score += score_dict[
+                        node1, solver.JoinDirection.LEFT, adjacent_piece]
+                adjacent_piece = compare_piece_numbers.get((row + 1, col))
+                if adjacent_piece is not None:
+                    comparison_count += 1
+                    score += score_dict[
+                        node1, solver.JoinDirection.DOWN, adjacent_piece]
+                adjacent_piece = compare_piece_numbers.get((row - 1, col))
+                if adjacent_piece is not None:
+                    comparison_count += 1
+                    score += score_dict[
+                        node1, solver.JoinDirection.UP, adjacent_piece]
+            if comparison_count == 0:
+                continue
+            if boost:
+                score = score / ((comparison_count * comparison_count) * 0.5)
+            else:
+                score = score / comparison_count
+            if score < best.score:
+                combined_pieces = np.zeros((height_padded, width_padded))
+                combined_pointer = np.zeros(
+                    (height_padded, width_padded), dtype=object)
+                for row, col in own_data["positions"]:
+                    combined_row = row + h2
+                    combined_col = col + w2
+                    combined_pieces[combined_row, combined_col] = 1
+                    combined_pointer[combined_row, combined_col] = (
+                        own_data["pic_matrix"][row, col]
+                    )
+                for row, col in compare_data["positions"]:
+                    combined_row = row + x
+                    combined_col = col + y
+                    combined_pieces[combined_row, combined_col] = 1
+                    combined_pointer[combined_row, combined_col] = (
+                        compare_data["pic_matrix"][row, col]
+                    )
+                best.setConnection(
+                    combined_pointer,
+                    compare_segment,
+                    score,
+                    segment,
+                    combined_pieces,
+                )
+        return best
+
+    def test_kruskal_connection_matches_legacy_component_scan(self):
+        rng = np.random.default_rng(2026)
+        image = rng.integers(0, 255, size=(16, 16, 3), dtype=np.uint8)
+        segments = solver.breakUpImage(
+            image,
+            length=4,
+            save_segments=False,
+            color_type=solver.ColorType.RGB,
+        )
+        solver.calculateScores(
+            segments,
+            solver.ScoreAlgorithm.EUCLIDEAN,
+            show_progress=False,
+            max_workers=1,
+            executor_type="serial",
+        )
+        original_size = len(segments)
+
+        for _round in range(5):
+            snapshot = tuple(segments)
+            for index, segment in enumerate(snapshot):
+                for compare_segment in snapshot[index + 1:]:
+                    key = (segment.component_id, compare_segment.component_id)
+                    segment.connections_dict.pop(key, None)
+                    segment.best_connection_found_so_far = (
+                        solver.BestConnection())
+                    current = segment.calculateConnectionsKruskal(
+                        compare_segment, False)
+                    expected = self.legacy_kruskal_connection(
+                        segment, compare_segment, False)
+                    self.assertEqual(expected.score, current.score)
+                    self.assertEqual(
+                        expected.second_best_score,
+                        current.second_best_score,
+                    )
+                    self.assertEqual(
+                        self.connection_layout(expected),
+                        self.connection_layout(current),
+                    )
+
+            best_connection = solver.findBestConnectionKruskal(
+                segments,
+                solver.CompareWithOtherSegments.ONLY_BEST,
+                False,
+                solver.CompareWithOtherSegments.ONLY_BEST,
+            )
+            if best_connection.pic_connection_matrix is None:
+                break
+            solver.joinPieces(best_connection, segments, original_size)
+
     def test_priority_queue_matches_full_scan_assembly(self):
         scan_segments, scan_original_size = self.make_segments()
         queue_segments, queue_original_size = self.make_segments()

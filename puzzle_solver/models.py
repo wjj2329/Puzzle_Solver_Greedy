@@ -15,6 +15,23 @@ from .enums import CompareWithOtherSegments, JOIN_EDGE_PAIRS, JoinDirection
 from .score_helpers import reciprocalScoreEntries
 
 
+_DIRECTION_INDEX = {
+    direction: index
+    for index, direction in enumerate(JoinDirection)
+}
+_UP_INDEX = _DIRECTION_INDEX[JoinDirection.UP]
+_DOWN_INDEX = _DIRECTION_INDEX[JoinDirection.DOWN]
+_LEFT_INDEX = _DIRECTION_INDEX[JoinDirection.LEFT]
+_RIGHT_INDEX = _DIRECTION_INDEX[JoinDirection.RIGHT]
+
+
+def scoreValuesArray(score_dict):
+    scalar_score_values = getattr(score_dict, "scalarScoreValues", None)
+    if scalar_score_values is None:
+        return None
+    return scalar_score_values()
+
+
 def scoreLookup(score_dict):
     score_value = getattr(score_dict, "scoreValue", None)
     if score_value is not None:
@@ -55,6 +72,7 @@ class BestConnection:
         self.pic_connection_matrix = pic_connection_matrix
         self.join_segment = join_segment
         self.binary_connection_matrix = binary_connection_matrix
+        self.kruskal_connection_data = None
 
     def setConnection(self, pic_connection_matrix, join_segment, score, own_segment, binary_connection_matrix):
         self.second_best_score = self.score
@@ -86,6 +104,12 @@ class BestConnection:
 
     def __eq__(self, other):
         return self.score == other.score
+
+    def hasConnection(self):
+        return (
+            self.pic_connection_matrix is not None
+            or self.kruskal_connection_data is not None
+        )
 
 
 class Segment:
@@ -382,12 +406,20 @@ class Segment:
                             temp_pic_matrix, compare_segment, score, self, temp_binary_matrix)
         return best_connection_found_so_far
 
-    def calculateConnectionsKruskal(self, compare_segment, boost_priority_of_big_pieces_joining):
+    def calculateConnectionsKruskal(
+            self,
+            compare_segment,
+            boost_priority_of_big_pieces_joining,
+            defer_connection_matrices=False):
         connection_cache_key = (self.component_id, compare_segment.component_id)
-        if connection_cache_key in self.connections_dict:
-            return self.connections_dict[connection_cache_key]
+        cached_connection = self.connections_dict.get(connection_cache_key)
+        if cached_connection is not None:
+            if not defer_connection_matrices:
+                self.materializeKruskalConnection(cached_connection)
+            return cached_connection
         score_dict = self.score_dict
-        score_lookup = scoreLookup(score_dict)
+        score_values = scoreValuesArray(score_dict)
+        score_lookup = None if score_values is not None else scoreLookup(score_dict)
         best_connection_found_so_far = self.best_connection_found_so_far
         own_data = self.kruskalComponentData()
         compare_data = compare_segment.kruskalComponentData()
@@ -401,11 +433,14 @@ class Segment:
         max_width = self.max_width
         own_shifted_data = self.kruskalShiftedComponentData(own_data, h2, w2)
         own_positions_padded = own_shifted_data["positions"]
-        own_boundary_positions_padded = own_shifted_data["boundary_piece_positions"]
+        own_boundary_rows = own_shifted_data["boundary_piece_rows"]
+        own_boundary_cols = own_shifted_data["boundary_piece_cols"]
+        own_boundary_piece_numbers = own_shifted_data["boundary_piece_numbers"]
         own_position_set = own_shifted_data["position_set"]
         own_piece_numbers = own_shifted_data["piece_by_position"]
         compare_positions = compare_data["positions"]
         compare_piece_by_position = compare_data["piece_by_position"]
+        compare_piece_number_grid = compare_data["piece_number_grid"]
         compare_is_single_piece = len(compare_positions) == 1
         own_is_single_piece = len(own_positions_padded) == 1
         if compare_is_single_piece:
@@ -425,7 +460,6 @@ class Segment:
                 height_padded,
                 width_padded):
             if compare_is_single_piece:
-                compare_piece_numbers = None
                 shifted_compare_position = (
                     compare_piece_position[0] + x,
                     compare_piece_position[1] + y,
@@ -433,20 +467,19 @@ class Segment:
                 if shifted_compare_position in own_position_set:
                     continue
             elif own_is_single_piece:
-                compare_piece_numbers = None
                 if (
                         own_piece_position[0] - x,
                         own_piece_position[1] - y,
                 ) in compare_piece_by_position:
                     continue
             else:
-                compare_piece_numbers = {
-                    (row+x, col+y): piece_number
-                    for (row, col), piece_number
-                    in compare_piece_by_position.items()
-                }
-                if any(position in own_position_set
-                       for position in compare_piece_numbers):
+                if self.kruskalComponentsOverlap(
+                        own_data,
+                        compare_data,
+                        x,
+                        y,
+                        h2,
+                        w2):
                     continue
             if not self.kruskalPlacementFits(
                     own_data,
@@ -465,6 +498,7 @@ class Segment:
                     shifted_compare_position,
                     compare_piece_number,
                     score_lookup,
+                    score_values,
                 )
             elif own_is_single_piece:
                 score, comparison_count = self.kruskalSingleOwnScore(
@@ -474,13 +508,18 @@ class Segment:
                     x,
                     y,
                     score_lookup,
+                    score_values,
                 )
             else:
-                score, comparison_count = self.kruskalScoreShiftedPieces(
-                    own_boundary_positions_padded,
-                    own_piece_numbers,
-                    compare_piece_numbers,
+                score, comparison_count = self.kruskalScoreGridPieces(
+                    own_boundary_rows,
+                    own_boundary_cols,
+                    own_boundary_piece_numbers,
+                    compare_piece_number_grid,
+                    x,
+                    y,
                     score_lookup,
+                    score_values,
                 )
             if comparison_count == 0:
                 continue
@@ -498,22 +537,32 @@ class Segment:
                 best_connection_offset = (x, y)
         if best_connection_offset is not None:
             x, y = best_connection_offset
-            combined_pointer, combined_pieces = (
-                self.kruskalConnectionMatrices(
-                    own_data,
-                    compare_data,
-                    x,
-                    y,
-                    h2,
-                    w2,
-                    height_padded,
-                    width_padded,
-                )
+            best_connection_found_so_far.kruskal_connection_data = (
+                own_data,
+                compare_data,
+                x,
+                y,
+                h2,
+                w2,
+                height_padded,
+                width_padded,
             )
-            best_connection_found_so_far.pic_connection_matrix = combined_pointer
-            best_connection_found_so_far.binary_connection_matrix = combined_pieces
+            if not defer_connection_matrices:
+                self.materializeKruskalConnection(best_connection_found_so_far)
         self.connections_dict[connection_cache_key] = best_connection_found_so_far
         return best_connection_found_so_far
+
+    def materializeKruskalConnection(self, connection):
+        if connection.pic_connection_matrix is not None:
+            return
+        if connection.kruskal_connection_data is None:
+            return
+        combined_pointer, combined_pieces = self.kruskalConnectionMatrices(
+            *connection.kruskal_connection_data,
+        )
+        connection.pic_connection_matrix = combined_pointer
+        connection.binary_connection_matrix = combined_pieces
+        connection.kruskal_connection_data = None
 
     def kruskalShiftedComponentData(self, component_data, row_offset, col_offset):
         shifted_cache = component_data.setdefault("shifted", {})
@@ -532,6 +581,16 @@ class Segment:
                 (row+row_offset, col+col_offset)
                 for row, col in component_data["boundary_piece_positions"]
             ),
+            "boundary_piece_rows": tuple(
+                row+row_offset
+                for row in component_data["boundary_piece_rows"]
+            ),
+            "boundary_piece_cols": tuple(
+                col+col_offset
+                for col in component_data["boundary_piece_cols"]
+            ),
+            "boundary_piece_numbers": component_data[
+                "boundary_piece_numbers"],
             "position_set": set(positions),
             "piece_by_position": {
                 (row+row_offset, col+col_offset): piece_number
@@ -547,7 +606,8 @@ class Segment:
             own_piece_numbers,
             compare_position,
             compare_piece_number,
-            score_lookup):
+            score_lookup,
+            score_values):
         row, col = compare_position
         score = 0
         comparison_count = 0
@@ -555,23 +615,39 @@ class Segment:
         adjacent_piece = own_piece_numbers.get((row-1, col))
         if adjacent_piece is not None:
             comparison_count += 1
-            score += score_lookup(adjacent_piece, JoinDirection.DOWN,
-                                  compare_piece_number)
+            if score_values is None:
+                score += score_lookup(adjacent_piece, JoinDirection.DOWN,
+                                      compare_piece_number)
+            else:
+                score += score_values[adjacent_piece, _DOWN_INDEX,
+                                      compare_piece_number]
         adjacent_piece = own_piece_numbers.get((row, col-1))
         if adjacent_piece is not None:
             comparison_count += 1
-            score += score_lookup(adjacent_piece, JoinDirection.RIGHT,
-                                  compare_piece_number)
+            if score_values is None:
+                score += score_lookup(adjacent_piece, JoinDirection.RIGHT,
+                                      compare_piece_number)
+            else:
+                score += score_values[adjacent_piece, _RIGHT_INDEX,
+                                      compare_piece_number]
         adjacent_piece = own_piece_numbers.get((row, col+1))
         if adjacent_piece is not None:
             comparison_count += 1
-            score += score_lookup(adjacent_piece, JoinDirection.LEFT,
-                                  compare_piece_number)
+            if score_values is None:
+                score += score_lookup(adjacent_piece, JoinDirection.LEFT,
+                                      compare_piece_number)
+            else:
+                score += score_values[adjacent_piece, _LEFT_INDEX,
+                                      compare_piece_number]
         adjacent_piece = own_piece_numbers.get((row+1, col))
         if adjacent_piece is not None:
             comparison_count += 1
-            score += score_lookup(adjacent_piece, JoinDirection.UP,
-                                  compare_piece_number)
+            if score_values is None:
+                score += score_lookup(adjacent_piece, JoinDirection.UP,
+                                      compare_piece_number)
+            else:
+                score += score_values[adjacent_piece, _UP_INDEX,
+                                      compare_piece_number]
 
         return score, comparison_count
 
@@ -582,7 +658,8 @@ class Segment:
             compare_piece_by_position,
             compare_row_offset,
             compare_col_offset,
-            score_lookup):
+            score_lookup,
+            score_values):
         row, col = own_position
         score = 0
         comparison_count = 0
@@ -591,56 +668,154 @@ class Segment:
             (row - compare_row_offset, col + 1 - compare_col_offset))
         if adjacent_piece is not None:
             comparison_count += 1
-            score += score_lookup(own_piece_number, JoinDirection.RIGHT,
-                                  adjacent_piece)
+            if score_values is None:
+                score += score_lookup(own_piece_number, JoinDirection.RIGHT,
+                                      adjacent_piece)
+            else:
+                score += score_values[own_piece_number, _RIGHT_INDEX,
+                                      adjacent_piece]
         adjacent_piece = compare_piece_by_position.get(
             (row - compare_row_offset, col - 1 - compare_col_offset))
         if adjacent_piece is not None:
             comparison_count += 1
-            score += score_lookup(own_piece_number, JoinDirection.LEFT,
-                                  adjacent_piece)
+            if score_values is None:
+                score += score_lookup(own_piece_number, JoinDirection.LEFT,
+                                      adjacent_piece)
+            else:
+                score += score_values[own_piece_number, _LEFT_INDEX,
+                                      adjacent_piece]
         adjacent_piece = compare_piece_by_position.get(
             (row + 1 - compare_row_offset, col - compare_col_offset))
         if adjacent_piece is not None:
             comparison_count += 1
-            score += score_lookup(own_piece_number, JoinDirection.DOWN,
-                                  adjacent_piece)
+            if score_values is None:
+                score += score_lookup(own_piece_number, JoinDirection.DOWN,
+                                      adjacent_piece)
+            else:
+                score += score_values[own_piece_number, _DOWN_INDEX,
+                                      adjacent_piece]
         adjacent_piece = compare_piece_by_position.get(
             (row - 1 - compare_row_offset, col - compare_col_offset))
         if adjacent_piece is not None:
             comparison_count += 1
-            score += score_lookup(own_piece_number, JoinDirection.UP,
-                                  adjacent_piece)
+            if score_values is None:
+                score += score_lookup(own_piece_number, JoinDirection.UP,
+                                      adjacent_piece)
+            else:
+                score += score_values[own_piece_number, _UP_INDEX,
+                                      adjacent_piece]
 
         return score, comparison_count
 
-    def kruskalScoreShiftedPieces(
+    def kruskalScoreGridPieces(
             self,
-            own_positions_padded,
+            own_rows,
+            own_cols,
             own_piece_numbers,
-            compare_piece_numbers,
-            score_lookup):
+            compare_piece_number_grid,
+            compare_row_offset,
+            compare_col_offset,
+            score_lookup,
+            score_values):
         score = 0
         comparison_count = 0
-        for row, col in own_positions_padded:
-            node1 = own_piece_numbers[row, col]
-            adjacent_piece = compare_piece_numbers.get((row, col+1))
-            if adjacent_piece is not None:
+        compare_height, compare_width = compare_piece_number_grid.shape
+        for index, row in enumerate(own_rows):
+            col = own_cols[index]
+            node1 = own_piece_numbers[index]
+            compare_row = row - compare_row_offset
+
+            compare_col = col + 1 - compare_col_offset
+            if (
+                    0 <= compare_row < compare_height
+                    and 0 <= compare_col < compare_width):
+                adjacent_piece = compare_piece_number_grid[
+                    compare_row, compare_col]
+            else:
+                adjacent_piece = 0
+            if adjacent_piece != 0:
                 comparison_count += 1
-                score += score_lookup(node1, JoinDirection.RIGHT, adjacent_piece)
-            adjacent_piece = compare_piece_numbers.get((row, col-1))
-            if adjacent_piece is not None:
+                if score_values is None:
+                    adjacent_piece = int(adjacent_piece)
+                    score += score_lookup(node1, JoinDirection.RIGHT,
+                                          adjacent_piece)
+                else:
+                    score += score_values[node1, _RIGHT_INDEX, adjacent_piece]
+
+            compare_col = col - 1 - compare_col_offset
+            if (
+                    0 <= compare_row < compare_height
+                    and 0 <= compare_col < compare_width):
+                adjacent_piece = compare_piece_number_grid[
+                    compare_row, compare_col]
+            else:
+                adjacent_piece = 0
+            if adjacent_piece != 0:
                 comparison_count += 1
-                score += score_lookup(node1, JoinDirection.LEFT, adjacent_piece)
-            adjacent_piece = compare_piece_numbers.get((row+1, col))
-            if adjacent_piece is not None:
+                if score_values is None:
+                    adjacent_piece = int(adjacent_piece)
+                    score += score_lookup(node1, JoinDirection.LEFT,
+                                          adjacent_piece)
+                else:
+                    score += score_values[node1, _LEFT_INDEX, adjacent_piece]
+
+            compare_row = row + 1 - compare_row_offset
+            compare_col = col - compare_col_offset
+            if (
+                    0 <= compare_row < compare_height
+                    and 0 <= compare_col < compare_width):
+                adjacent_piece = compare_piece_number_grid[
+                    compare_row, compare_col]
+            else:
+                adjacent_piece = 0
+            if adjacent_piece != 0:
                 comparison_count += 1
-                score += score_lookup(node1, JoinDirection.DOWN, adjacent_piece)
-            adjacent_piece = compare_piece_numbers.get((row-1, col))
-            if adjacent_piece is not None:
+                if score_values is None:
+                    adjacent_piece = int(adjacent_piece)
+                    score += score_lookup(node1, JoinDirection.DOWN,
+                                          adjacent_piece)
+                else:
+                    score += score_values[node1, _DOWN_INDEX, adjacent_piece]
+
+            compare_row = row - 1 - compare_row_offset
+            compare_col = col - compare_col_offset
+            if (
+                    0 <= compare_row < compare_height
+                    and 0 <= compare_col < compare_width):
+                adjacent_piece = compare_piece_number_grid[
+                    compare_row, compare_col]
+            else:
+                adjacent_piece = 0
+            if adjacent_piece != 0:
                 comparison_count += 1
-                score += score_lookup(node1, JoinDirection.UP, adjacent_piece)
+                if score_values is None:
+                    adjacent_piece = int(adjacent_piece)
+                    score += score_lookup(node1, JoinDirection.UP,
+                                          adjacent_piece)
+                else:
+                    score += score_values[node1, _UP_INDEX, adjacent_piece]
         return score, comparison_count
+
+    def kruskalComponentsOverlap(
+            self,
+            own_data,
+            compare_data,
+            compare_row_offset,
+            compare_col_offset,
+            own_row_offset,
+            own_col_offset):
+        own_binary_matrix = own_data["binary_matrix"]
+        own_height = own_data["height"]
+        own_width = own_data["width"]
+        for row, col in compare_data["positions"]:
+            own_row = row + compare_row_offset - own_row_offset
+            own_col = col + compare_col_offset - own_col_offset
+            if (
+                    0 <= own_row < own_height
+                    and 0 <= own_col < own_width
+                    and own_binary_matrix[own_row, own_col] != 0):
+                return True
+        return False
 
     def kruskalConnectionMatrices(
             self,
@@ -682,6 +857,12 @@ class Segment:
             (int(row), int(col))
             for row, col in zip(rows, cols)
         )
+        piece_number_grid = np.zeros(binary_matrix.shape, dtype=np.int32)
+        piece_by_position = {}
+        for position in positions:
+            piece_number = pic_matrix[position].piece_number
+            piece_by_position[position] = piece_number
+            piece_number_grid[position] = piece_number
         position_set = set(positions)
         boundary_positions = set()
         boundary_piece_positions = []
@@ -704,13 +885,20 @@ class Segment:
             "pic_matrix": pic_matrix,
             "height": binary_matrix.shape[0],
             "width": binary_matrix.shape[1],
+            "binary_matrix": binary_matrix,
+            "piece_number_grid": piece_number_grid,
             "positions": positions,
-            "piece_by_position": {
-                position: pic_matrix[position].piece_number
-                for position in positions
-            },
+            "piece_by_position": piece_by_position,
             "boundary_positions": tuple(sorted(boundary_positions)),
             "boundary_piece_positions": tuple(boundary_piece_positions),
+            "boundary_piece_rows": tuple(
+                row for row, _col in boundary_piece_positions),
+            "boundary_piece_cols": tuple(
+                col for _row, col in boundary_piece_positions),
+            "boundary_piece_numbers": tuple(
+                piece_by_position[position]
+                for position in boundary_piece_positions
+            ),
             "min_row": min(row for row, _col in positions),
             "max_row": max(row for row, _col in positions),
             "min_col": min(col for _row, col in positions),
