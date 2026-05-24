@@ -58,6 +58,12 @@ class DenseScoreTable:
             return tuple(float(value) for value in score), False
         return (float(score),), True
 
+    def _indexArray(self, values):
+        array = np.asarray(values)
+        if not np.issubdtype(array.dtype, np.integer):
+            array = array.astype(np.intp)
+        return array
+
     def __setitem__(self, key, score):
         indices = self._scoreIndices(key)
         if indices is None:
@@ -84,6 +90,19 @@ class DenseScoreTable:
             return float(self._values[indices + (0,)])
         component_count = self._values.shape[-1]
         return tuple(float(value) for value in self._values[indices][:component_count])
+
+    def scoreValue(self, own_number, direction, join_number):
+        direction_index = DIRECTION_TO_INDEX[direction]
+        if not self._filled[own_number, direction_index, join_number]:
+            raise KeyError((own_number, direction, join_number))
+        if self._scalar[own_number, direction_index, join_number]:
+            return float(self._values[own_number, direction_index, join_number, 0])
+        component_count = self._values.shape[-1]
+        return tuple(
+            float(value)
+            for value
+            in self._values[own_number, direction_index, join_number, :component_count]
+        )
 
     def __contains__(self, key):
         indices = self._scoreIndices(key)
@@ -202,9 +221,9 @@ class DenseScoreTable:
         if len(own_numbers) == 0:
             return
 
-        own_numbers = np.asarray(own_numbers, dtype=np.intp)
-        direction_indices = np.asarray(direction_indices, dtype=np.intp)
-        join_numbers = np.asarray(join_numbers, dtype=np.intp)
+        own_numbers = self._indexArray(own_numbers)
+        direction_indices = self._indexArray(direction_indices)
+        join_numbers = self._indexArray(join_numbers)
         scores = np.asarray(scores, dtype=np.float64)
         if scores.ndim == 1:
             scores = scores[:, np.newaxis]
