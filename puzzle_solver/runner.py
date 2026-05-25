@@ -166,7 +166,15 @@ def main(argv=None):
 
     if args.trim_fill:
         phase_started = time.perf_counter()
-        final_connection = trimAndFillAssembly(segment_list, args.show_progress)
+        try:
+            final_connection = trimAndFillAssembly(
+                segment_list,
+                args.show_progress,
+            )
+        except KeyboardInterrupt:
+            if args.show_progress:
+                print("\nTrim/fill interrupted; exiting cleanly.")
+            raise SystemExit(130) from None
         printTiming("Trim/fill", phase_started, args.show_progress)
         if final_connection is not None and args.save_assembly:
             image_name = saveImage(

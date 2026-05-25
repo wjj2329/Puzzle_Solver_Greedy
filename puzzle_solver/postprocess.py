@@ -1,4 +1,6 @@
+import heapq
 import math
+import time
 
 import numpy as np
 
@@ -12,6 +14,7 @@ NEIGHBOR_DIRECTIONS = (
     (0, -1, JoinDirection.RIGHT),
     (0, 1, JoinDirection.LEFT),
 )
+FILL_PROGRESS_INTERVAL_SECONDS = 5.0
 
 
 def componentSize(segment):
@@ -79,25 +82,81 @@ def adjacentPieces(frame, row, col):
             yield neighbor, direction
 
 
-def fillScore(frame, row, col, candidate):
+def adjacentEmptyHoles(frame, row, col):
+    height, width = frame.shape
+    for row_delta, col_delta, _direction in NEIGHBOR_DIRECTIONS:
+        neighbor_row = row + row_delta
+        neighbor_col = col + col_delta
+        if not (0 <= neighbor_row < height and 0 <= neighbor_col < width):
+            continue
+        if frame[neighbor_row, neighbor_col] == 0:
+            yield neighbor_row, neighbor_col
+
+
+def holeNeighborData(frame, row, col):
+    return tuple(
+        (neighbor.piece_number, direction)
+        for neighbor, direction in adjacentPieces(frame, row, col)
+    )
+
+
+def fillScoreForNeighbors(neighbor_data, score_dict, candidate_piece_number):
     total = 0.0
-    count = 0
-    score_dict = candidate.score_dict
-    for neighbor, direction in adjacentPieces(frame, row, col):
+    count = len(neighbor_data)
+    if count == 0:
+        return math.inf, count
+    for neighbor_piece_number, direction in neighbor_data:
         score = score_dict.get(
-            (neighbor.piece_number, direction, candidate.piece_number),
+            (neighbor_piece_number, direction, candidate_piece_number),
             math.inf,
         )
         if math.isinf(score):
             return math.inf, count
         total += score
-        count += 1
-    if count == 0:
-        return math.inf, count
     return total / count, count
 
 
-def fillHoles(segment, candidates):
+def fillScore(frame, row, col, candidate):
+    return fillScoreForNeighbors(
+        holeNeighborData(frame, row, col),
+        candidate.score_dict,
+        candidate.piece_number,
+    )
+
+
+def pushHoleScores(heap, frame, row, col, remaining, hole_versions):
+    if frame[row, col] != 0:
+        return
+    neighbor_data = holeNeighborData(frame, row, col)
+    if not neighbor_data:
+        return
+    version = hole_versions[row, col]
+    for candidate in remaining.values():
+        score, neighbor_count = fillScoreForNeighbors(
+            neighbor_data,
+            candidate.score_dict,
+            candidate.piece_number,
+        )
+        if math.isinf(score):
+            continue
+        heapq.heappush(
+            heap,
+            (
+                -neighbor_count,
+                score,
+                candidate.piece_number,
+                row,
+                col,
+                version,
+            ),
+        )
+
+
+def fillHoles(
+        segment,
+        candidates,
+        show_progress=False,
+        progress_interval=FILL_PROGRESS_INTERVAL_SECONDS):
     frame = segment.pic_connection_matrix
     remaining = {
         candidate.piece_number: candidate
@@ -108,23 +167,63 @@ def fillHoles(segment, candidates):
             if piece != 0
         }
     }
+    holes = {
+        (int(row), int(col))
+        for row, col in zip(*np.where(frame == 0))
+    }
+    hole_versions = {
+        hole: 0
+        for hole in holes
+    }
+    heap = []
+    for row, col in holes:
+        pushHoleScores(heap, frame, row, col, remaining, hole_versions)
+
     filled = 0
+    next_progress = time.perf_counter() + progress_interval
     while remaining:
         best = None
-        for row, col in zip(*np.where(frame == 0)):
-            for candidate in remaining.values():
-                score, neighbor_count = fillScore(frame, row, col, candidate)
-                if math.isinf(score):
-                    continue
-                item = (-neighbor_count, score, candidate.piece_number, row, col, candidate)
-                if best is None or item < best:
-                    best = item
+        while heap:
+            item = heapq.heappop(heap)
+            _neighbor_count, _score, piece_number, row, col, version = item
+            if piece_number not in remaining:
+                continue
+            if frame[row, col] != 0:
+                continue
+            if hole_versions.get((row, col)) != version:
+                continue
+            best = item
+            break
         if best is None:
             break
-        _, _, piece_number, row, col, candidate = best
+        _, _, piece_number, row, col, _version = best
+        candidate = remaining[piece_number]
         frame[row, col] = candidate
+        holes.discard((row, col))
         del remaining[piece_number]
         filled += 1
+
+        for neighbor_row, neighbor_col in adjacentEmptyHoles(frame, row, col):
+            if (neighbor_row, neighbor_col) not in holes:
+                continue
+            hole_versions[neighbor_row, neighbor_col] += 1
+            pushHoleScores(
+                heap,
+                frame,
+                neighbor_row,
+                neighbor_col,
+                remaining,
+                hole_versions,
+            )
+
+        if show_progress and time.perf_counter() >= next_progress:
+            print(
+                "Trim/fill progress: "
+                f"filled {filled}, {len(holes)} holes remain, "
+                f"{len(remaining)} candidates remain",
+                flush=True,
+            )
+            next_progress = time.perf_counter() + progress_interval
 
     segment.binary_connection_matrix = (frame != 0).astype(int)
     return filled
@@ -142,7 +241,14 @@ def trimAndFillAssembly(segment_list, show_progress=True):
         candidates.extend(iterPieces(segment))
     candidates.extend(trimToBestFrame(root))
 
-    filled = fillHoles(root, candidates)
+    if show_progress:
+        missing = root.max_height * root.max_width - componentSize(root)
+        print(
+            "Trim/fill post-process: "
+            f"starting with {missing} holes and {len(candidates)} candidates",
+            flush=True,
+        )
+    filled = fillHoles(root, candidates, show_progress=show_progress)
     segment_list[:] = [root]
 
     if show_progress:

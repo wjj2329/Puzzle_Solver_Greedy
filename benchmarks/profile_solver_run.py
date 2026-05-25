@@ -187,12 +187,21 @@ def run_profile(args):
     if assembly_overhead > 0.001:
         timer.timings["assembly_overhead"] = assembly_overhead
 
+    assembly_remaining = len(segments)
+    if args.trim_fill:
+        with timer.time("trim_fill"):
+            Solver.trimAndFillAssembly(
+                segments,
+                show_progress=args.show_progress,
+            )
+
     total_elapsed = time.perf_counter() - total_started
     print(f"image: {image_path}")
     print(f"image_shape: {image_shape}")
     print(f"piece_size: {args.piece_size}")
     print(f"pieces: {original_size}")
     print(f"after_best_buddy: {after_best_buddy}")
+    print(f"assembly_remaining: {assembly_remaining}")
     print(f"remaining: {len(segments)}")
     print(f"rounds: {rounds}")
     print(f"color_type: {color_type.name.lower()}")
@@ -284,6 +293,11 @@ def main():
         "--save-assembly",
         action="store_true",
         help="Write each assembly round image while profiling.",
+    )
+    parser.add_argument(
+        "--trim-fill",
+        action="store_true",
+        help="Run and time trim/fill after assembly.",
     )
     parser.add_argument(
         "--output-dir",

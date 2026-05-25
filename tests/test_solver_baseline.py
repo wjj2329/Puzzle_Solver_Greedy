@@ -949,6 +949,52 @@ class PostProcessTests(unittest.TestCase):
             connections_dict={},
         )
 
+    def legacy_fill_holes(self, segment, candidates):
+        frame = segment.pic_connection_matrix
+        remaining = {
+            candidate.piece_number: candidate
+            for candidate in candidates
+            if candidate.piece_number not in {
+                piece.piece_number
+                for piece in frame.flat
+                if piece != 0
+            }
+        }
+        filled = 0
+        while remaining:
+            best = None
+            for row, col in zip(*np.where(frame == 0)):
+                for candidate in remaining.values():
+                    score, neighbor_count = solver.fillScore(
+                        frame, row, col, candidate)
+                    if math.isinf(score):
+                        continue
+                    item = (
+                        -neighbor_count,
+                        score,
+                        candidate.piece_number,
+                        row,
+                        col,
+                        candidate,
+                    )
+                    if best is None or item < best:
+                        best = item
+            if best is None:
+                break
+            _, _, piece_number, row, col, candidate = best
+            frame[row, col] = candidate
+            del remaining[piece_number]
+            filled += 1
+
+        segment.binary_connection_matrix = (frame != 0).astype(int)
+        return filled
+
+    def connection_layout(self, segment):
+        return tuple(
+            tuple(0 if cell == 0 else cell.piece_number for cell in row)
+            for row in segment.pic_connection_matrix
+        )
+
     def test_trim_to_best_frame_keeps_densest_known_puzzle_window(self):
         score_dict = {}
         first = self.make_segment(1, score_dict)
@@ -992,6 +1038,58 @@ class PostProcessTests(unittest.TestCase):
 
         self.assertEqual(1, filled)
         self.assertIs(root.pic_connection_matrix[0, 1], best)
+
+    def test_fill_holes_matches_legacy_bruteforce_choices(self):
+        score_dict = defaultdict(lambda: 100.0)
+        directions = tuple(solver.JoinDirection)
+        for neighbor_piece_number in range(1, 7):
+            for candidate_piece_number in range(2, 7):
+                for direction_index, direction in enumerate(directions):
+                    score_dict[
+                        neighbor_piece_number,
+                        direction,
+                        candidate_piece_number,
+                    ] = (
+                        candidate_piece_number * 0.1
+                        + neighbor_piece_number * 0.01
+                        + direction_index * 0.001
+                    )
+
+        legacy_root = self.make_segment(1, score_dict, max_size=3)
+        heap_root = self.make_segment(1, score_dict, max_size=3)
+        legacy_root.pic_connection_matrix = np.asarray(
+            [
+                [0, 0, 0],
+                [0, legacy_root, 0],
+                [0, 0, 0],
+            ],
+            dtype=object,
+        )
+        heap_root.pic_connection_matrix = np.asarray(
+            [
+                [0, 0, 0],
+                [0, heap_root, 0],
+                [0, 0, 0],
+            ],
+            dtype=object,
+        )
+        legacy_root.binary_connection_matrix = (
+            legacy_root.pic_connection_matrix != 0).astype(int)
+        heap_root.binary_connection_matrix = (
+            heap_root.pic_connection_matrix != 0).astype(int)
+        candidates = [
+            self.make_segment(piece_number, score_dict, max_size=3)
+            for piece_number in range(2, 7)
+        ]
+
+        legacy_filled = self.legacy_fill_holes(legacy_root, candidates)
+        heap_filled = solver.fillHoles(heap_root, candidates)
+
+        self.assertEqual(legacy_filled, heap_filled)
+        self.assertEqual(
+            self.connection_layout(legacy_root),
+            self.connection_layout(heap_root),
+        )
 
     def test_trim_and_fill_uses_leftover_components_as_candidates(self):
         score_dict = {}
