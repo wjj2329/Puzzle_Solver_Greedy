@@ -119,6 +119,18 @@ def buildArgumentParser():
         help="Favor joins with more touching edges when scoring component merges.",
     )
     parser.add_argument(
+        "--beam-width",
+        type=int,
+        default=1,
+        help="Keep this many alternate Kruskal assembly states. 1 uses greedy assembly.",
+    )
+    parser.add_argument(
+        "--beam-candidates",
+        type=int,
+        default=None,
+        help="Candidate joins to branch from each beam state. Omit to match beam width.",
+    )
+    parser.add_argument(
         "--trim-fill",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -192,4 +204,10 @@ def parseArguments(argv=None):
         raise SystemExit("--piece-size must be greater than 0")
     if args.score_workers is not None and args.score_workers <= 0:
         raise SystemExit("--score-workers must be greater than 0")
+    if args.beam_width <= 0:
+        raise SystemExit("--beam-width must be greater than 0")
+    if args.beam_candidates is not None and args.beam_candidates <= 0:
+        raise SystemExit("--beam-candidates must be greater than 0")
+    if args.beam_width > 1 and args.assembly_type != AssemblyType.KRUSKAL:
+        raise SystemExit("--beam-width is only supported with Kruskal assembly")
     return args

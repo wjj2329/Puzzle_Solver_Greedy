@@ -7,6 +7,7 @@ from skimage import color
 
 from .assembly import (
     KruskalConnectionPriorityQueue,
+    assembleKruskalBeamSearch,
     connectBestBudsFirst,
     findBestConnectionKruskal,
     findBestConnectionPrim,
@@ -100,6 +101,7 @@ def main(argv=None):
     kruskal_queue = None
     if (
             args.assembly_type == AssemblyType.KRUSKAL
+            and args.beam_width <= 1
             and args.use_kruskal_priority_queue):
         phase_started = time.perf_counter()
         kruskal_queue = KruskalConnectionPriorityQueue(
@@ -110,7 +112,41 @@ def main(argv=None):
         )
         printTiming("Kruskal queue build", phase_started, args.show_progress)
     assembly_started = time.perf_counter()
-    while len(segment_list) > 1:
+    if args.assembly_type == AssemblyType.KRUSKAL and args.beam_width > 1:
+        def saveBeamJoin(best_connection, join_round):
+            if not args.save_assembly:
+                return
+            image_name = saveImage(
+                best_connection,
+                length,
+                join_round,
+                args.color_type,
+                args.output_name,
+                output_dir=args.output_dir,
+            )
+            if args.show_animation:
+                updated_picture = ImageTk.PhotoImage(Image.open(image_name))
+                w.configure(image=updated_picture)
+                w.image = updated_picture
+                w.pack(side="bottom", fill="both", expand="no")
+                window.update()
+
+        round_number = assembleKruskalBeamSearch(
+            segment_list,
+            original_size,
+            beam_width=args.beam_width,
+            beam_candidates=args.beam_candidates,
+            boost_priority_of_big_pieces_joining=args.boost_big_piece_priority,
+            compare_type=args.compare_type,
+            compare_mode=args.compare_type,
+            show_progress=args.show_progress,
+            on_join=saveBeamJoin,
+        )
+        if segment_list:
+            root = segment_list[0]
+    while len(segment_list) > 1 and not (
+            args.assembly_type == AssemblyType.KRUSKAL
+            and args.beam_width > 1):
         best_connection = None
         if args.assembly_type == AssemblyType.KRUSKAL:
             if kruskal_queue is None:

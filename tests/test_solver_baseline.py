@@ -41,6 +41,8 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.connect_best_buddy_first)
         self.assertTrue(args.use_kruskal_priority_queue)
         self.assertTrue(args.trim_fill)
+        self.assertEqual(1, args.beam_width)
+        self.assertIsNone(args.beam_candidates)
         self.assertEqual("process", args.score_executor)
         self.assertEqual("dense", args.score_storage)
         self.assertIsNone(args.score_workers)
@@ -115,6 +117,26 @@ class CliTests(unittest.TestCase):
             args.compare_type,
         )
         self.assertEqual(123, args.shuffle_seed)
+
+    def test_solver_cli_parses_beam_options_for_kruskal(self):
+        args = solver.parseArguments([
+            "--beam-width",
+            "3",
+            "--beam-candidates",
+            "4",
+        ])
+
+        self.assertEqual(3, args.beam_width)
+        self.assertEqual(4, args.beam_candidates)
+
+    def test_solver_cli_rejects_beam_with_prim(self):
+        with self.assertRaises(SystemExit):
+            solver.parseArguments([
+                "--assembly-type",
+                "prim",
+                "--beam-width",
+                "2",
+            ])
 
     def test_solver_cli_help_describes_new_score_mode(self):
         help_text = solver.buildArgumentParser().format_help()
@@ -1377,6 +1399,12 @@ class KruskalAssemblyTests(unittest.TestCase):
             for row in connection.pic_connection_matrix
         )
 
+    def segment_layout(self, segment):
+        return tuple(
+            tuple(0 if cell == 0 else cell.piece_number for cell in row)
+            for row in segment.pic_connection_matrix
+        )
+
     def legacy_kruskal_offsets(
             self,
             own_data,
@@ -1577,6 +1605,49 @@ class KruskalAssemblyTests(unittest.TestCase):
         self.assertEqual(scan_history, queue_history)
         self.assertEqual(len(scan_history), queue_rounds)
         self.assertEqual(len(scan_segments), len(queue_segments))
+
+    def test_beam_search_with_one_candidate_matches_greedy_queue(self):
+        queue_segments, queue_original_size = self.make_segments()
+        beam_segments, beam_original_size = self.make_segments()
+        queue_history = []
+        beam_history = []
+
+        def record_queue_join(best_connection, round_number):
+            queue_history.append((
+                round_number,
+                best_connection.score,
+                best_connection.own_segment.piece_number,
+                best_connection.join_segment.piece_number,
+            ))
+
+        def record_beam_join(best_connection, round_number):
+            beam_history.append((
+                round_number,
+                best_connection.score,
+                best_connection.own_segment.piece_number,
+                best_connection.join_segment.piece_number,
+            ))
+
+        queue_rounds = solver.assembleKruskalWithPriorityQueue(
+            queue_segments,
+            queue_original_size,
+            on_join=record_queue_join,
+        )
+        beam_rounds = solver.assembleKruskalBeamSearch(
+            beam_segments,
+            beam_original_size,
+            beam_width=2,
+            beam_candidates=1,
+            on_join=record_beam_join,
+        )
+
+        self.assertEqual(queue_rounds, beam_rounds)
+        self.assertEqual(queue_history, beam_history)
+        self.assertEqual(len(queue_segments), len(beam_segments))
+        self.assertEqual(
+            self.segment_layout(queue_segments[0]),
+            self.segment_layout(beam_segments[0]),
+        )
 
     def test_kruskal_connection_preserves_pieces_in_component_holes(self):
         score_dict = defaultdict(lambda: 100.0)

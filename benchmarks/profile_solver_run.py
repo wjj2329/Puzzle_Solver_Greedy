@@ -139,7 +139,32 @@ def run_profile(args):
 
     rounds = 0
     assembly_started = time.perf_counter()
-    while len(segments) > 1:
+    if args.assembly_strategy == "beam":
+        def save_beam_join(best_connection, round_number):
+            if not args.save_assembly:
+                return
+            Solver.saveImage(
+                best_connection,
+                args.piece_size,
+                round_number,
+                color_type,
+                args.output_name,
+                output_dir=output_dir,
+            )
+
+        with timer.time("assembly_beam_search"):
+            rounds = Solver.assembleKruskalBeamSearch(
+                segments,
+                original_size,
+                beam_width=args.beam_width,
+                beam_candidates=args.beam_candidates,
+                boost_priority_of_big_pieces_joining=args.boost_big_piece_priority,
+                compare_type=Solver.CompareWithOtherSegments.ONLY_BEST,
+                compare_mode=Solver.CompareWithOtherSegments.ONLY_BEST,
+                show_progress=args.show_progress,
+                on_join=save_beam_join,
+            )
+    while len(segments) > 1 and args.assembly_strategy != "beam":
         if kruskal_queue is None:
             with timer.time("assembly_find_best"):
                 best_connection = Solver.findBestConnectionKruskal(
@@ -213,6 +238,9 @@ def run_profile(args):
         f"workers={format_workers(score_workers)}"
     )
     print(f"assembly_strategy: {args.assembly_strategy}")
+    if args.assembly_strategy == "beam":
+        print(f"beam_width: {args.beam_width}")
+        print(f"beam_candidates: {args.beam_candidates or args.beam_width}")
     print(f"save_segments: {args.save_segments}")
     print(f"save_assembly: {args.save_assembly}")
     print(f"total: {total_elapsed:.3f}s")
@@ -269,10 +297,12 @@ def main():
     )
     parser.add_argument(
         "--assembly-strategy",
-        choices=("queue", "scan"),
+        choices=("queue", "scan", "beam"),
         default="queue",
         help="Kruskal assembly strategy. Default uses the optimized queue.",
     )
+    parser.add_argument("--beam-width", type=int, default=2)
+    parser.add_argument("--beam-candidates", type=int, default=None)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument(
         "--skip-best-buddy",
@@ -321,6 +351,10 @@ def main():
         raise SystemExit("--piece-size must be greater than 0")
     if args.score_workers is not None and args.score_workers <= 0:
         raise SystemExit("--score-workers must be greater than 0")
+    if args.beam_width <= 0:
+        raise SystemExit("--beam-width must be greater than 0")
+    if args.beam_candidates is not None and args.beam_candidates <= 0:
+        raise SystemExit("--beam-candidates must be greater than 0")
 
     run_profile(args)
 

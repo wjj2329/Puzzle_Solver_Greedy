@@ -1,12 +1,15 @@
 from .assembly import (
     KruskalConnectionPriorityQueue,
+    assembleKruskalBeamSearch,
     assembleKruskalWithPriorityQueue,
     calculateSinglePieceConnection,
+    cloneSegmentList,
     connectBestBudsFirst,
     findBestBuddyConnection,
     findBestConnectionKruskal,
     findBestConnectionPrim,
     findBestRootSegment,
+    findTopConnectionsKruskal,
     joinPieces,
 )
 from .cli import buildArgumentParser, parseArguments
