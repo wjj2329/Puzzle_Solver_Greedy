@@ -1290,6 +1290,125 @@ class ConnectionTests(unittest.TestCase):
         self.assertIs(connection.pic_connection_matrix[0, 0], second)
         self.assertIs(connection.pic_connection_matrix[1, 0], first)
 
+    def test_single_piece_best_buddy_dense_scores_match_dict_path(self):
+        score_dict = solver.DenseScoreTable(2)
+        first = solver.Segment(
+            np.zeros((2, 2, 3)),
+            max_width=2,
+            max_height=2,
+            piece_number=1,
+            component_id=1,
+            score_dict=score_dict,
+            connections_dict={},
+        )
+        second = solver.Segment(
+            np.ones((2, 2, 3)),
+            max_width=2,
+            max_height=2,
+            piece_number=2,
+            component_id=2,
+            score_dict=score_dict,
+            connections_dict={},
+        )
+        for direction, score in {
+            solver.JoinDirection.UP: 1,
+            solver.JoinDirection.DOWN: 3,
+            solver.JoinDirection.LEFT: 1,
+            solver.JoinDirection.RIGHT: 2,
+        }.items():
+            score_dict[1, direction, 2] = score
+
+        connection = solver.calculateSinglePieceConnection(first, second)
+
+        self.assertEqual(1, connection.score)
+        self.assertEqual(1, connection.second_best_score)
+        self.assertIs(connection.pic_connection_matrix[0, 0], second)
+        self.assertIs(connection.pic_connection_matrix[1, 0], first)
+
+    def test_dense_single_piece_candidate_cache_matches_dict_path(self):
+        def build_segments(score_dict):
+            first = solver.Segment(
+                np.zeros((2, 2, 3)),
+                max_width=4,
+                max_height=4,
+                piece_number=1,
+                component_id=10,
+                score_dict=score_dict,
+                connections_dict={},
+            )
+            second = solver.Segment(
+                np.ones((2, 2, 3)),
+                max_width=4,
+                max_height=4,
+                piece_number=2,
+                component_id=2,
+                score_dict=score_dict,
+                connections_dict={},
+            )
+            third = solver.Segment(
+                np.full((2, 2, 3), 2),
+                max_width=4,
+                max_height=4,
+                piece_number=3,
+                component_id=3,
+                score_dict=score_dict,
+                connections_dict={},
+            )
+            first.pic_connection_matrix = np.asarray(
+                [[first, second]],
+                dtype=object,
+            )
+            first.binary_connection_matrix = np.asarray([[1, 1]])
+            return first, third
+
+        def populate_scores(score_dict):
+            for own_piece in (1, 2, 3):
+                for join_piece in (1, 2, 3):
+                    if own_piece == join_piece:
+                        continue
+                    for direction in solver.JoinDirection:
+                        score_dict[own_piece, direction, join_piece] = (
+                            own_piece * 100
+                            + join_piece * 10
+                            + direction.value
+                        )
+
+        def piece_numbers(matrix):
+            return [
+                [
+                    0 if piece == 0 else piece.piece_number
+                    for piece in row
+                ]
+                for row in matrix
+            ]
+
+        dict_scores = {}
+        populate_scores(dict_scores)
+        dict_first, dict_third = build_segments(dict_scores)
+
+        dense_scores = solver.DenseScoreTable(3)
+        populate_scores(dense_scores)
+        dense_first, dense_third = build_segments(dense_scores)
+
+        dict_connection = dict_first.calculateConnectionsKruskal(
+            dict_third,
+            boost_priority_of_big_pieces_joining=False,
+        )
+        dense_connection = dense_first.calculateConnectionsKruskal(
+            dense_third,
+            boost_priority_of_big_pieces_joining=False,
+        )
+
+        self.assertAlmostEqual(dict_connection.score, dense_connection.score)
+        self.assertAlmostEqual(
+            dict_connection.second_best_score,
+            dense_connection.second_best_score,
+        )
+        self.assertEqual(
+            piece_numbers(dict_connection.pic_connection_matrix),
+            piece_numbers(dense_connection.pic_connection_matrix),
+        )
+
     def test_best_connection_strips_empty_rows_and_columns(self):
         connection = solver.BestConnection(
             pic_connection_matrix=np.asarray(
@@ -1647,6 +1766,51 @@ class KruskalAssemblyTests(unittest.TestCase):
         self.assertEqual(
             self.segment_layout(queue_segments[0]),
             self.segment_layout(beam_segments[0]),
+        )
+
+    def test_beam_search_with_multiple_candidates_is_stable(self):
+        beam_segments, beam_original_size = self.make_segments()
+        beam_history = []
+
+        def record_beam_join(best_connection, round_number):
+            beam_history.append((
+                round_number,
+                best_connection.score,
+                best_connection.own_segment.piece_number,
+                best_connection.join_segment.piece_number,
+            ))
+
+        beam_rounds = solver.assembleKruskalBeamSearch(
+            beam_segments,
+            beam_original_size,
+            beam_width=2,
+            beam_candidates=2,
+            on_join=record_beam_join,
+        )
+
+        self.assertEqual(8, beam_rounds)
+        self.assertEqual(1, len(beam_segments))
+        self.assertEqual(
+            (
+                (8, 0, 0, 0),
+                (1, 4, 9, 5),
+                (0, 7, 2, 6),
+                (0, 0, 0, 3),
+            ),
+            self.segment_layout(beam_segments[0]),
+        )
+        self.assertEqual(
+            [
+                (0, 367.2284036342964, 2, 7),
+                (1, 403.2435153990426, 5, 6),
+                (2, 442.0580617050358, 2, 4),
+                (3, 476.2206698548523, 1, 8),
+                (4, 495.17246608796245, 3, 5),
+                (5, 503.5998927582074, 1, 2),
+                (6, 532.1237246410635, 3, 9),
+                (7, 644.3093314857682, 1, 3),
+            ],
+            beam_history,
         )
 
     def test_kruskal_connection_preserves_pieces_in_component_holes(self):

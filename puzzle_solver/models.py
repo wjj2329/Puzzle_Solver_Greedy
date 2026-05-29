@@ -431,13 +431,23 @@ class Segment:
         width_padded = w1+2*w2
         max_height = self.max_height
         max_width = self.max_width
-        own_shifted_data = self.kruskalShiftedComponentData(own_data, h2, w2)
+        own_shifted_data = self.kruskalShiftedComponentData(
+            own_data,
+            h2,
+            w2,
+            include_lookup=score_values is None,
+        )
         own_positions_padded = own_shifted_data["positions"]
         own_boundary_rows = own_shifted_data["boundary_piece_rows"]
         own_boundary_cols = own_shifted_data["boundary_piece_cols"]
         own_boundary_piece_numbers = own_shifted_data["boundary_piece_numbers"]
-        own_position_set = own_shifted_data["position_set"]
-        own_piece_numbers = own_shifted_data["piece_by_position"]
+        own_piece_number_grid = own_data["piece_number_grid"]
+        if score_values is None:
+            own_position_set = own_shifted_data["position_set"]
+            own_piece_numbers = own_shifted_data["piece_by_position"]
+        else:
+            own_position_set = None
+            own_piece_numbers = None
         compare_positions = compare_data["positions"]
         compare_piece_by_position = compare_data["piece_by_position"]
         compare_piece_number_grid = compare_data["piece_number_grid"]
@@ -449,7 +459,11 @@ class Segment:
                 compare_piece_position]
         if own_is_single_piece:
             own_piece_position = own_positions_padded[0]
-            own_piece_number = own_piece_numbers[own_piece_position]
+            if own_piece_numbers is None:
+                own_piece_number = int(
+                    own_piece_number_grid[own_data["positions"][0]])
+            else:
+                own_piece_number = own_piece_numbers[own_piece_position]
         best_connection_offset = None
         own_min_row_padded = h2 + own_data["min_row"]
         own_max_row_padded = h2 + own_data["max_row"]
@@ -460,55 +474,92 @@ class Segment:
         compare_min_col = compare_data["min_col"]
         compare_max_col = compare_data["max_col"]
 
-        for x, y in self.kruskalCandidateOffsets(
+        if score_values is not None and compare_is_single_piece:
+            candidate_offsets = self.kruskalSingleCompareCandidatesDense(
                 own_data,
                 compare_data,
                 h2,
                 w2,
                 height_padded,
-                width_padded):
-            shifted_min_row = x + compare_min_row
-            shifted_max_row = x + compare_max_row
-            shifted_min_col = y + compare_min_col
-            shifted_max_col = y + compare_max_col
-            min_row = (
-                own_min_row_padded
-                if own_min_row_padded < shifted_min_row
-                else shifted_min_row
+                width_padded,
+                max_height,
+                max_width,
             )
-            max_row = (
-                own_max_row_padded
-                if own_max_row_padded > shifted_max_row
-                else shifted_max_row
+            candidate_offsets_are_prefit = True
+        else:
+            candidate_offsets = self.kruskalCandidateOffsets(
+                own_data,
+                compare_data,
+                h2,
+                w2,
+                height_padded,
+                width_padded,
             )
-            min_col = (
-                own_min_col_padded
-                if own_min_col_padded < shifted_min_col
-                else shifted_min_col
-            )
-            max_col = (
-                own_max_col_padded
-                if own_max_col_padded > shifted_max_col
-                else shifted_max_col
-            )
-            if (
-                    max_col - min_col > max_height
-                    or max_row - min_row > max_width):
-                continue
+            candidate_offsets_are_prefit = False
+
+        for candidate_offset in candidate_offsets:
+            if score_values is not None and compare_is_single_piece:
+                x, y, adjacent_entries = candidate_offset
+            else:
+                x, y = candidate_offset
+                adjacent_entries = None
+            if not candidate_offsets_are_prefit:
+                shifted_min_row = x + compare_min_row
+                shifted_max_row = x + compare_max_row
+                shifted_min_col = y + compare_min_col
+                shifted_max_col = y + compare_max_col
+                min_row = (
+                    own_min_row_padded
+                    if own_min_row_padded < shifted_min_row
+                    else shifted_min_row
+                )
+                max_row = (
+                    own_max_row_padded
+                    if own_max_row_padded > shifted_max_row
+                    else shifted_max_row
+                )
+                min_col = (
+                    own_min_col_padded
+                    if own_min_col_padded < shifted_min_col
+                    else shifted_min_col
+                )
+                max_col = (
+                    own_max_col_padded
+                    if own_max_col_padded > shifted_max_col
+                    else shifted_max_col
+                )
+                if (
+                        max_col - min_col > max_height
+                        or max_row - min_row > max_width):
+                    continue
 
             if compare_is_single_piece:
-                shifted_compare_position = (
-                    compare_piece_position[0] + x,
-                    compare_piece_position[1] + y,
-                )
-                if shifted_compare_position in own_position_set:
-                    continue
+                if score_values is not None:
+                    if not adjacent_entries:
+                        continue
+                else:
+                    shifted_compare_position = (
+                        compare_piece_position[0] + x,
+                        compare_piece_position[1] + y,
+                    )
+                    if shifted_compare_position in own_position_set:
+                        continue
             elif own_is_single_piece:
-                if (
-                        own_piece_position[0] - x,
-                        own_piece_position[1] - y,
-                ) in compare_piece_by_position:
-                    continue
+                if score_values is not None:
+                    compare_row = own_piece_position[0] - x
+                    compare_col = own_piece_position[1] - y
+                    if (
+                            0 <= compare_row < h2
+                            and 0 <= compare_col < w2
+                            and compare_piece_number_grid[
+                                compare_row, compare_col] != 0):
+                        continue
+                else:
+                    if (
+                            own_piece_position[0] - x,
+                            own_piece_position[1] - y,
+                    ) in compare_piece_by_position:
+                        continue
             else:
                 if self.kruskalComponentsOverlap(
                         own_data,
@@ -520,34 +571,67 @@ class Segment:
                     continue
 
             if compare_is_single_piece:
-                score, comparison_count = self.kruskalSingleCompareScore(
-                    own_piece_numbers,
-                    shifted_compare_position,
-                    compare_piece_number,
-                    score_lookup,
-                    score_values,
-                )
+                if score_values is not None:
+                    score = 0
+                    comparison_count = len(adjacent_entries)
+                    for adjacent_piece, direction_index in adjacent_entries:
+                        score += score_values[
+                            adjacent_piece,
+                            direction_index,
+                            compare_piece_number,
+                        ]
+                else:
+                    score, comparison_count = self.kruskalSingleCompareScore(
+                        own_piece_numbers,
+                        shifted_compare_position,
+                        compare_piece_number,
+                        score_lookup,
+                        score_values,
+                    )
             elif own_is_single_piece:
-                score, comparison_count = self.kruskalSingleOwnScore(
-                    own_piece_number,
-                    own_piece_position,
-                    compare_piece_by_position,
-                    x,
-                    y,
-                    score_lookup,
-                    score_values,
-                )
+                if score_values is not None:
+                    score, comparison_count = (
+                        self.kruskalSingleOwnScoreDenseGrid(
+                            own_piece_number,
+                            own_piece_position,
+                            compare_piece_number_grid,
+                            x,
+                            y,
+                            score_values,
+                        )
+                    )
+                else:
+                    score, comparison_count = self.kruskalSingleOwnScore(
+                        own_piece_number,
+                        own_piece_position,
+                        compare_piece_by_position,
+                        x,
+                        y,
+                        score_lookup,
+                        score_values,
+                    )
             else:
-                score, comparison_count = self.kruskalScoreGridPieces(
-                    own_boundary_rows,
-                    own_boundary_cols,
-                    own_boundary_piece_numbers,
-                    compare_piece_number_grid,
-                    x,
-                    y,
-                    score_lookup,
-                    score_values,
-                )
+                if score_values is not None:
+                    score, comparison_count = self.kruskalScoreGridPiecesDense(
+                        own_boundary_rows,
+                        own_boundary_cols,
+                        own_boundary_piece_numbers,
+                        compare_piece_number_grid,
+                        x,
+                        y,
+                        score_values,
+                    )
+                else:
+                    score, comparison_count = self.kruskalScoreGridPieces(
+                        own_boundary_rows,
+                        own_boundary_cols,
+                        own_boundary_piece_numbers,
+                        compare_piece_number_grid,
+                        x,
+                        y,
+                        score_lookup,
+                        score_values,
+                    )
             if comparison_count == 0:
                 continue
             if boost_priority_of_big_pieces_joining:
@@ -579,6 +663,132 @@ class Segment:
         self.connections_dict[connection_cache_key] = best_connection_found_so_far
         return best_connection_found_so_far
 
+    def kruskalSingleCompareCandidatesDense(
+            self,
+            own_data,
+            compare_data,
+            own_row_offset,
+            own_col_offset,
+            height_padded,
+            width_padded,
+            max_height,
+            max_width):
+        compare_row, compare_col = compare_data["positions"][0]
+        cache = own_data.setdefault("single_compare_candidates_dense", {})
+        cache_key = (
+            own_row_offset,
+            own_col_offset,
+            compare_data["height"],
+            compare_data["width"],
+            compare_row,
+            compare_col,
+            height_padded,
+            width_padded,
+            max_height,
+            max_width,
+        )
+        candidates = cache.get(cache_key)
+        if candidates is not None:
+            return candidates
+
+        own_piece_number_grid = own_data["piece_number_grid"]
+        own_height, own_width = own_piece_number_grid.shape
+        max_x = height_padded - compare_data["height"]
+        max_y = width_padded - compare_data["width"]
+        own_min_row_padded = own_row_offset + own_data["min_row"]
+        own_max_row_padded = own_row_offset + own_data["max_row"]
+        own_min_col_padded = own_col_offset + own_data["min_col"]
+        own_max_col_padded = own_col_offset + own_data["max_col"]
+        compare_min_row = compare_data["min_row"]
+        compare_max_row = compare_data["max_row"]
+        compare_min_col = compare_data["min_col"]
+        compare_max_col = compare_data["max_col"]
+        candidates = []
+        for boundary_row, boundary_col in own_data["boundary_positions"]:
+            x = boundary_row + own_row_offset - compare_row
+            y = boundary_col + own_col_offset - compare_col
+            if x < 0 or x > max_x or y < 0 or y > max_y:
+                continue
+            shifted_min_row = x + compare_min_row
+            shifted_max_row = x + compare_max_row
+            shifted_min_col = y + compare_min_col
+            shifted_max_col = y + compare_max_col
+            min_row = (
+                own_min_row_padded
+                if own_min_row_padded < shifted_min_row
+                else shifted_min_row
+            )
+            max_row = (
+                own_max_row_padded
+                if own_max_row_padded > shifted_max_row
+                else shifted_max_row
+            )
+            min_col = (
+                own_min_col_padded
+                if own_min_col_padded < shifted_min_col
+                else shifted_min_col
+            )
+            max_col = (
+                own_max_col_padded
+                if own_max_col_padded > shifted_max_col
+                else shifted_max_col
+            )
+            if (
+                    max_col - min_col > max_height
+                    or max_row - min_row > max_width):
+                continue
+
+            adjacent_entries = []
+            adjacent_row = boundary_row - 1
+            if 0 <= adjacent_row < own_height and 0 <= boundary_col < own_width:
+                adjacent_piece = own_piece_number_grid[
+                    adjacent_row,
+                    boundary_col,
+                ]
+            else:
+                adjacent_piece = 0
+            if adjacent_piece != 0:
+                adjacent_entries.append((adjacent_piece, _DOWN_INDEX))
+
+            adjacent_col = boundary_col - 1
+            if 0 <= boundary_row < own_height and 0 <= adjacent_col < own_width:
+                adjacent_piece = own_piece_number_grid[
+                    boundary_row,
+                    adjacent_col,
+                ]
+            else:
+                adjacent_piece = 0
+            if adjacent_piece != 0:
+                adjacent_entries.append((adjacent_piece, _RIGHT_INDEX))
+
+            adjacent_col = boundary_col + 1
+            if 0 <= boundary_row < own_height and 0 <= adjacent_col < own_width:
+                adjacent_piece = own_piece_number_grid[
+                    boundary_row,
+                    adjacent_col,
+                ]
+            else:
+                adjacent_piece = 0
+            if adjacent_piece != 0:
+                adjacent_entries.append((adjacent_piece, _LEFT_INDEX))
+
+            adjacent_row = boundary_row + 1
+            if 0 <= adjacent_row < own_height and 0 <= boundary_col < own_width:
+                adjacent_piece = own_piece_number_grid[
+                    adjacent_row,
+                    boundary_col,
+                ]
+            else:
+                adjacent_piece = 0
+            if adjacent_piece != 0:
+                adjacent_entries.append((adjacent_piece, _UP_INDEX))
+
+            candidates.append((x, y, tuple(adjacent_entries)))
+
+        candidates = tuple(candidates)
+        cache[cache_key] = candidates
+        return candidates
+
     def materializeKruskalConnection(self, connection):
         if connection.pic_connection_matrix is not None:
             return
@@ -591,9 +801,14 @@ class Segment:
         connection.binary_connection_matrix = combined_pieces
         connection.kruskal_connection_data = None
 
-    def kruskalShiftedComponentData(self, component_data, row_offset, col_offset):
+    def kruskalShiftedComponentData(
+            self,
+            component_data,
+            row_offset,
+            col_offset,
+            include_lookup=True):
         shifted_cache = component_data.setdefault("shifted", {})
-        cache_key = (row_offset, col_offset)
+        cache_key = (row_offset, col_offset, include_lookup)
         shifted_data = shifted_cache.get(cache_key)
         if shifted_data is not None:
             return shifted_data
@@ -618,13 +833,14 @@ class Segment:
             ),
             "boundary_piece_numbers": component_data[
                 "boundary_piece_numbers"],
-            "position_set": set(positions),
-            "piece_by_position": {
+        }
+        if include_lookup:
+            shifted_data["position_set"] = set(positions)
+            shifted_data["piece_by_position"] = {
                 (row+row_offset, col+col_offset): piece_number
                 for (row, col), piece_number
                 in component_data["piece_by_position"].items()
-            },
-        }
+            }
         shifted_cache[cache_key] = shifted_data
         return shifted_data
 
@@ -712,6 +928,63 @@ class Segment:
                                   compare_piece_number]
         adjacent_piece = own_piece_numbers.get((row+1, col))
         if adjacent_piece is not None:
+            comparison_count += 1
+            score += score_values[adjacent_piece, _UP_INDEX,
+                                  compare_piece_number]
+
+        return score, comparison_count
+
+    def kruskalSingleCompareScoreDenseGrid(
+            self,
+            own_piece_number_grid,
+            own_row_offset,
+            own_col_offset,
+            compare_position,
+            compare_piece_number,
+            score_values):
+        row, col = compare_position
+        own_row = row - own_row_offset
+        own_col = col - own_col_offset
+        own_height, own_width = own_piece_number_grid.shape
+        score = 0
+        comparison_count = 0
+
+        adjacent_row = own_row - 1
+        if 0 <= adjacent_row < own_height and 0 <= own_col < own_width:
+            adjacent_piece = own_piece_number_grid[adjacent_row, own_col]
+        else:
+            adjacent_piece = 0
+        if adjacent_piece != 0:
+            comparison_count += 1
+            score += score_values[adjacent_piece, _DOWN_INDEX,
+                                  compare_piece_number]
+
+        adjacent_col = own_col - 1
+        if 0 <= own_row < own_height and 0 <= adjacent_col < own_width:
+            adjacent_piece = own_piece_number_grid[own_row, adjacent_col]
+        else:
+            adjacent_piece = 0
+        if adjacent_piece != 0:
+            comparison_count += 1
+            score += score_values[adjacent_piece, _RIGHT_INDEX,
+                                  compare_piece_number]
+
+        adjacent_col = own_col + 1
+        if 0 <= own_row < own_height and 0 <= adjacent_col < own_width:
+            adjacent_piece = own_piece_number_grid[own_row, adjacent_col]
+        else:
+            adjacent_piece = 0
+        if adjacent_piece != 0:
+            comparison_count += 1
+            score += score_values[adjacent_piece, _LEFT_INDEX,
+                                  compare_piece_number]
+
+        adjacent_row = own_row + 1
+        if 0 <= adjacent_row < own_height and 0 <= own_col < own_width:
+            adjacent_piece = own_piece_number_grid[adjacent_row, own_col]
+        else:
+            adjacent_piece = 0
+        if adjacent_piece != 0:
             comparison_count += 1
             score += score_values[adjacent_piece, _UP_INDEX,
                                   compare_piece_number]
@@ -816,6 +1089,71 @@ class Segment:
         adjacent_piece = compare_piece_by_position.get(
             (row - 1 - compare_row_offset, col - compare_col_offset))
         if adjacent_piece is not None:
+            comparison_count += 1
+            score += score_values[own_piece_number, _UP_INDEX,
+                                  adjacent_piece]
+
+        return score, comparison_count
+
+    def kruskalSingleOwnScoreDenseGrid(
+            self,
+            own_piece_number,
+            own_position,
+            compare_piece_number_grid,
+            compare_row_offset,
+            compare_col_offset,
+            score_values):
+        row, col = own_position
+        score = 0
+        comparison_count = 0
+        compare_height, compare_width = compare_piece_number_grid.shape
+        compare_row = row - compare_row_offset
+
+        compare_col = col + 1 - compare_col_offset
+        if (
+                0 <= compare_row < compare_height
+                and 0 <= compare_col < compare_width):
+            adjacent_piece = compare_piece_number_grid[compare_row, compare_col]
+        else:
+            adjacent_piece = 0
+        if adjacent_piece != 0:
+            comparison_count += 1
+            score += score_values[own_piece_number, _RIGHT_INDEX,
+                                  adjacent_piece]
+
+        compare_col = col - 1 - compare_col_offset
+        if (
+                0 <= compare_row < compare_height
+                and 0 <= compare_col < compare_width):
+            adjacent_piece = compare_piece_number_grid[compare_row, compare_col]
+        else:
+            adjacent_piece = 0
+        if adjacent_piece != 0:
+            comparison_count += 1
+            score += score_values[own_piece_number, _LEFT_INDEX,
+                                  adjacent_piece]
+
+        compare_row = row + 1 - compare_row_offset
+        compare_col = col - compare_col_offset
+        if (
+                0 <= compare_row < compare_height
+                and 0 <= compare_col < compare_width):
+            adjacent_piece = compare_piece_number_grid[compare_row, compare_col]
+        else:
+            adjacent_piece = 0
+        if adjacent_piece != 0:
+            comparison_count += 1
+            score += score_values[own_piece_number, _DOWN_INDEX,
+                                  adjacent_piece]
+
+        compare_row = row - 1 - compare_row_offset
+        if (
+                0 <= compare_row < compare_height
+                and 0 <= compare_col < compare_width):
+            adjacent_piece = compare_piece_number_grid[compare_row, compare_col]
+        else:
+            adjacent_piece = 0
+        if adjacent_piece != 0:
             comparison_count += 1
             score += score_values[own_piece_number, _UP_INDEX,
                                   adjacent_piece]
@@ -1032,22 +1370,24 @@ class Segment:
             own_col_offset,
             height_padded,
             width_padded):
+        combined_pointer = np.zeros((height_padded, width_padded), dtype=object)
         combined_pieces = zeros((height_padded, width_padded))
-        combined_pointer = zeros((height_padded, width_padded), dtype="object")
+        own_offset_row = own_row_offset
+        own_offset_col = own_col_offset
         for row, col in own_data["positions"]:
-            combined_row = row+own_row_offset
-            combined_col = col+own_col_offset
-            combined_pieces[combined_row, combined_col] = 1
+            combined_row = row + own_offset_row
+            combined_col = col + own_offset_col
             combined_pointer[combined_row, combined_col] = (
                 own_data["pic_matrix"][row, col]
             )
-        for row, col in compare_data["positions"]:
-            combined_row = row+compare_row_offset
-            combined_col = col+compare_col_offset
             combined_pieces[combined_row, combined_col] = 1
+        for row, col in compare_data["positions"]:
+            combined_row = row + compare_row_offset
+            combined_col = col + compare_col_offset
             combined_pointer[combined_row, combined_col] = (
                 compare_data["pic_matrix"][row, col]
             )
+            combined_pieces[combined_row, combined_col] = 1
         return combined_pointer, combined_pieces
 
     def kruskalComponentData(self):

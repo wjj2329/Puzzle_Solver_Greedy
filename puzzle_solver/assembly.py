@@ -5,7 +5,8 @@ import random
 import numpy as np
 
 from .enums import CompareWithOtherSegments, JoinDirection
-from .models import BestConnection, Segment
+from .models import BestConnection, Segment, scoreValuesArray
+from .score_table import DIRECTIONS_BY_INDEX
 
 
 class KruskalBeamState:
@@ -137,8 +138,10 @@ class KruskalConnectionPriorityQueue:
         )
         cloned.compare_type = self.compare_type
         cloned.compare_mode = self.compare_mode
-        cloned._counter = itertools.count()
-        cloned._heap = []
+        cloned_heap = []
+        counter = 0
+        append_heap = cloned_heap.append
+        segment_mapping_get = segment_mapping.get
 
         excluded_segments = set(excluded_segments)
         for (
@@ -157,22 +160,25 @@ class KruskalConnectionPriorityQueue:
             if join_segment.component_id != join_component_id:
                 continue
 
-            cloned_own_segment = segment_mapping.get(own_segment)
-            cloned_join_segment = segment_mapping.get(join_segment)
+            cloned_own_segment = segment_mapping_get(own_segment)
+            cloned_join_segment = segment_mapping_get(join_segment)
             if cloned_own_segment is None or cloned_join_segment is None:
                 continue
-            heapq.heappush(
-                cloned._heap,
+            append_heap(
                 (
                     priority,
-                    next(cloned._counter),
+                    counter,
                     None,
                     cloned_own_segment,
                     cloned_join_segment,
                     cloned_own_segment.component_id,
                     cloned_join_segment.component_id,
-                ),
+                )
             )
+            counter += 1
+        heapq.heapify(cloned_heap)
+        cloned._counter = itertools.count(counter)
+        cloned._heap = cloned_heap
         return cloned
 
     def _connectionFromItem(self, item, active_segments, materialize):
@@ -265,18 +271,22 @@ def cloneSegmentList(segment_list):
     return cloned_segments
 
 
-def cloneSegmentListWithMapping(segment_list):
+def cloneSegmentListWithMapping(segment_list, include_piece_mapping=False):
     if not segment_list:
+        if include_piece_mapping:
+            return [], {}, {}
         return [], {}
 
     score_dict = segment_list[0].score_dict
     connections_dict = {}
     cloned_by_piece_number = {}
     segment_mapping = {}
+    piece_mapping = {}
 
     def clone_piece(piece):
         cloned = cloned_by_piece_number.get(piece.piece_number)
         if cloned is not None:
+            piece_mapping[piece] = cloned
             return cloned
         cloned = Segment(
             piece.pic_matrix,
@@ -288,6 +298,7 @@ def cloneSegmentListWithMapping(segment_list):
             connections_dict,
         )
         cloned_by_piece_number[piece.piece_number] = cloned
+        piece_mapping[piece] = cloned
         return cloned
 
     def clone_connection_matrix(matrix):
@@ -311,7 +322,119 @@ def cloneSegmentListWithMapping(segment_list):
         cloned_segment.best_connection_found_so_far = BestConnection()
         cloned_segment._kruskal_component_data = None
         cloned_segments.append(cloned_segment)
+    if include_piece_mapping:
+        return cloned_segments, segment_mapping, piece_mapping
     return cloned_segments, segment_mapping
+
+
+def cloneKruskalConnectionForBranch(
+        connection,
+        child_own_segment,
+        child_join_segment,
+        piece_mapping):
+    child_connection = BestConnection(
+        own_segment=child_own_segment,
+        join_segment=child_join_segment,
+    )
+    child_connection.score = connection.score
+    child_connection.second_best_score = connection.second_best_score
+
+    if connection.kruskal_connection_data is not None:
+        (
+            own_data,
+            compare_data,
+            compare_row_offset,
+            compare_col_offset,
+            own_row_offset,
+            own_col_offset,
+            height_padded,
+            width_padded,
+        ) = connection.kruskal_connection_data
+        child_connection.pic_connection_matrix = (
+            cloneKruskalConnectionMatrixForBranch(
+                own_data,
+                compare_data,
+                compare_row_offset,
+                compare_col_offset,
+                own_row_offset,
+                own_col_offset,
+                height_padded,
+                width_padded,
+                piece_mapping,
+            )
+        )
+        child_connection.binary_connection_matrix = (
+            kruskalBinaryConnectionMatrix(
+                own_data,
+                compare_data,
+                compare_row_offset,
+                compare_col_offset,
+                own_row_offset,
+                own_col_offset,
+                height_padded,
+                width_padded,
+            )
+        )
+        return child_connection
+
+    if connection.pic_connection_matrix is not None:
+        child_connection.pic_connection_matrix = clonePieceMatrixForBranch(
+            connection.pic_connection_matrix,
+            piece_mapping,
+        )
+        child_connection.binary_connection_matrix = np.array(
+            connection.binary_connection_matrix,
+            copy=True,
+        )
+    return child_connection
+
+
+def cloneKruskalConnectionMatrixForBranch(
+        own_data,
+        compare_data,
+        compare_row_offset,
+        compare_col_offset,
+        own_row_offset,
+        own_col_offset,
+        height_padded,
+        width_padded,
+        piece_mapping):
+    combined_pointer = np.zeros((height_padded, width_padded), dtype=object)
+    for row, col in own_data["positions"]:
+        combined_pointer[row + own_row_offset, col + own_col_offset] = (
+            piece_mapping[own_data["pic_matrix"][row, col]]
+        )
+    for row, col in compare_data["positions"]:
+        combined_pointer[
+            row + compare_row_offset,
+            col + compare_col_offset,
+        ] = piece_mapping[compare_data["pic_matrix"][row, col]]
+    return combined_pointer
+
+
+def kruskalBinaryConnectionMatrix(
+        own_data,
+        compare_data,
+        compare_row_offset,
+        compare_col_offset,
+        own_row_offset,
+        own_col_offset,
+        height_padded,
+        width_padded):
+    combined_pieces = np.zeros((height_padded, width_padded))
+    for row, col in own_data["positions"]:
+        combined_pieces[row + own_row_offset, col + own_col_offset] = 1
+    for row, col in compare_data["positions"]:
+        combined_pieces[row + compare_row_offset, col + compare_col_offset] = 1
+    return combined_pieces
+
+
+def clonePieceMatrixForBranch(matrix, piece_mapping):
+    cloned_matrix = np.zeros(matrix.shape, dtype=object)
+    for index, piece in np.ndenumerate(matrix):
+        if piece != 0:
+            cloned_matrix[index] = piece_mapping[piece]
+    return cloned_matrix
 
 
 def findTopConnectionsKruskal(
@@ -401,12 +524,17 @@ def assembleKruskalBeamSearch(
         )
     ]
     while True:
-        child_states = []
+        child_specs = []
         sequence = itertools.count()
 
         for state in states:
             if len(state.segment_list) <= 1:
-                child_states.append((state.path_score, next(sequence), state))
+                child_specs.append((
+                    state.path_score,
+                    next(sequence),
+                    state,
+                    None,
+                ))
                 continue
 
             candidates = state.connection_queue.topConnections(
@@ -414,61 +542,75 @@ def assembleKruskalBeamSearch(
                 beam_candidates,
             )
             for connection in candidates:
-                child_segments, segment_mapping = cloneSegmentListWithMapping(
-                    state.segment_list)
-                child_own_segment = segment_mapping.get(
-                    connection.own_segment)
-                child_join_segment = segment_mapping.get(
-                    connection.join_segment)
-                if child_own_segment is None or child_join_segment is None:
-                    continue
-
-                child_own_segment.best_connection_found_so_far = (
-                    BestConnection())
-                child_connection = child_own_segment.calculateConnectionsKruskal(
-                    child_join_segment,
-                    boost_priority_of_big_pieces_joining,
-                )
-                if child_connection.pic_connection_matrix is None:
-                    continue
-
-                history_item = (
-                    child_own_segment.component_id,
-                    child_own_segment.piece_number,
-                    child_join_segment.component_id,
-                    child_join_segment.piece_number,
-                )
-                joinPieces(child_connection, child_segments, original_size)
-                child_queue = state.connection_queue.cloneForBranch(
-                    segment_mapping,
-                    (connection.own_segment, connection.join_segment),
-                )
-                child_queue.addConnectionsFor(
-                    child_connection.own_segment,
-                    child_segments,
-                )
-                priority = connectionPriority(child_connection, compare_type)
-                child_state = KruskalBeamState(
-                    child_segments,
-                    connection_queue=child_queue,
-                    path_score=state.path_score + priority,
-                    rounds=state.rounds + 1,
-                    history=state.history + (history_item,),
-                )
-                child_states.append((
-                    child_state.path_score,
+                priority = connectionPriority(connection, compare_type)
+                child_specs.append((
+                    state.path_score + priority,
                     next(sequence),
-                    child_state,
+                    state,
+                    connection,
                 ))
 
-        if not child_states:
+        if not child_specs:
             break
 
-        states = [
-            state
-            for _score, _sequence, state
-            in heapq.nsmallest(beam_width, child_states)
-        ]
+        selected_specs = heapq.nsmallest(beam_width, child_specs)
+        states = []
+        for path_score, _sequence, state, connection in selected_specs:
+            if connection is None:
+                states.append(state)
+                continue
+
+            (
+                child_segments,
+                segment_mapping,
+                piece_mapping,
+            ) = cloneSegmentListWithMapping(
+                state.segment_list,
+                include_piece_mapping=True,
+            )
+            child_own_segment = segment_mapping.get(
+                connection.own_segment)
+            child_join_segment = segment_mapping.get(
+                connection.join_segment)
+            if child_own_segment is None or child_join_segment is None:
+                continue
+
+            child_connection = cloneKruskalConnectionForBranch(
+                connection,
+                child_own_segment,
+                child_join_segment,
+                piece_mapping,
+            )
+            if child_connection.pic_connection_matrix is None:
+                continue
+
+            history_item = (
+                child_own_segment.component_id,
+                child_own_segment.piece_number,
+                child_join_segment.component_id,
+                child_join_segment.piece_number,
+            )
+            joinPieces(child_connection, child_segments, original_size)
+            child_queue = state.connection_queue.cloneForBranch(
+                segment_mapping,
+                (connection.own_segment, connection.join_segment),
+            )
+            child_queue.addConnectionsFor(
+                child_connection.own_segment,
+                child_segments,
+            )
+            child_state = KruskalBeamState(
+                child_segments,
+                connection_queue=child_queue,
+                path_score=path_score,
+                rounds=state.rounds + 1,
+                history=state.history + (history_item,),
+            )
+            states.append(child_state)
+
+        if not states:
+            break
+
         best_state = min(
             states,
             key=lambda state: (len(state.segment_list), state.path_score),
@@ -554,11 +696,17 @@ def findBestRootSegment(segment_list):
     return random.choice(segment_list)
 
 
-def findBestBuddyConnection(segment, segment_list, single_piece_by_segment=None):
+def findBestBuddyConnection(
+        segment,
+        segment_list,
+        single_piece_by_segment=None,
+        score_values=None):
     if single_piece_by_segment is None:
         segment_is_single_piece = isSinglePiece(segment)
     else:
         segment_is_single_piece = single_piece_by_segment[segment]
+    if score_values is None and segment_is_single_piece:
+        score_values = scoreValuesArray(segment.score_dict)
     best_so_far = BestConnection()
     for segment2 in segment_list:
         if segment != segment2:
@@ -567,9 +715,18 @@ def findBestBuddyConnection(segment, segment_list, single_piece_by_segment=None)
             else:
                 segment2_is_single_piece = single_piece_by_segment[segment2]
             if segment_is_single_piece and segment2_is_single_piece:
-                best_direction, score, second_best_score = (
-                    singlePieceBestDirection(segment, segment2)
-                )
+                if score_values is None:
+                    best_direction, score, second_best_score = (
+                        singlePieceBestDirection(segment, segment2)
+                    )
+                else:
+                    best_direction, score, second_best_score = (
+                        singlePieceBestDirectionDense(
+                            segment,
+                            segment2,
+                            score_values,
+                        )
+                    )
                 if score < best_so_far.score:
                     best_so_far = buildSinglePieceConnection(
                         segment,
@@ -610,6 +767,14 @@ def calculateSinglePieceConnection(segment, compare_segment):
 
 def singlePieceBestDirection(segment, compare_segment):
     score_dict = segment.score_dict
+    score_values = scoreValuesArray(score_dict)
+    if score_values is not None:
+        return singlePieceBestDirectionDense(
+            segment,
+            compare_segment,
+            score_values,
+        )
+
     segment_piece_number = segment.piece_number
     compare_piece_number = compare_segment.piece_number
     best_direction = None
@@ -622,6 +787,27 @@ def singlePieceBestDirection(segment, compare_segment):
             direction,
             compare_piece_number,
         ]
+        if best_score is None or score < best_score:
+            if best_score is not None:
+                second_best_score = best_score
+            best_direction = direction
+            best_score = score
+        elif score < second_best_score:
+            second_best_score = score
+
+    return best_direction, best_score, second_best_score
+
+
+def singlePieceBestDirectionDense(segment, compare_segment, score_values):
+    segment_piece_number = segment.piece_number
+    compare_piece_number = compare_segment.piece_number
+    scores = score_values[segment_piece_number, :, compare_piece_number]
+    best_direction = None
+    best_score = None
+    second_best_score = float("inf")
+
+    for direction_index, direction in enumerate(DIRECTIONS_BY_INDEX):
+        score = float(scores[direction_index])
         if best_score is None or score < best_score:
             if best_score is not None:
                 second_best_score = best_score
