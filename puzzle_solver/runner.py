@@ -8,6 +8,7 @@ from skimage import color
 from .assembly import (
     KruskalConnectionPriorityQueue,
     assembleKruskalBeamSearch,
+    assembleKruskalHybridBeamSearch,
     connectBestBudsFirst,
     findBestConnectionKruskal,
     findBestConnectionPrim,
@@ -131,17 +132,31 @@ def main(argv=None):
                 w.pack(side="bottom", fill="both", expand="no")
                 window.update()
 
-        round_number = assembleKruskalBeamSearch(
-            segment_list,
-            original_size,
-            beam_width=args.beam_width,
-            beam_candidates=args.beam_candidates,
-            boost_priority_of_big_pieces_joining=args.boost_big_piece_priority,
-            compare_type=args.compare_type,
-            compare_mode=args.compare_type,
-            show_progress=args.show_progress,
-            on_join=saveBeamJoin,
-        )
+        if args.beam_start_components is None:
+            round_number = assembleKruskalBeamSearch(
+                segment_list,
+                original_size,
+                beam_width=args.beam_width,
+                beam_candidates=args.beam_candidates,
+                boost_priority_of_big_pieces_joining=args.boost_big_piece_priority,
+                compare_type=args.compare_type,
+                compare_mode=args.compare_type,
+                show_progress=args.show_progress,
+                on_join=saveBeamJoin if args.save_assembly else None,
+            )
+        else:
+            round_number = assembleKruskalHybridBeamSearch(
+                segment_list,
+                original_size,
+                beam_start_components=args.beam_start_components,
+                beam_width=args.beam_width,
+                beam_candidates=args.beam_candidates,
+                boost_priority_of_big_pieces_joining=args.boost_big_piece_priority,
+                compare_type=args.compare_type,
+                compare_mode=args.compare_type,
+                show_progress=args.show_progress,
+                on_join=saveBeamJoin if args.save_assembly else None,
+            )
         if segment_list:
             root = segment_list[0]
     while len(segment_list) > 1 and not (
@@ -206,6 +221,7 @@ def main(argv=None):
             final_connection = trimAndFillAssembly(
                 segment_list,
                 args.show_progress,
+                preserve_components=args.trim_fill_components,
             )
         except KeyboardInterrupt:
             if args.show_progress:

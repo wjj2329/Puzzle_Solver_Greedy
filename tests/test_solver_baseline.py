@@ -43,6 +43,8 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.trim_fill)
         self.assertEqual(1, args.beam_width)
         self.assertIsNone(args.beam_candidates)
+        self.assertIsNone(args.beam_start_components)
+        self.assertFalse(args.trim_fill_components)
         self.assertEqual("process", args.score_executor)
         self.assertEqual("dense", args.score_storage)
         self.assertIsNone(args.score_workers)
@@ -124,10 +126,13 @@ class CliTests(unittest.TestCase):
             "3",
             "--beam-candidates",
             "4",
+            "--beam-start-components",
+            "20",
         ])
 
         self.assertEqual(3, args.beam_width)
         self.assertEqual(4, args.beam_candidates)
+        self.assertEqual(20, args.beam_start_components)
 
     def test_solver_cli_rejects_beam_with_prim(self):
         with self.assertRaises(SystemExit):
@@ -136,6 +141,13 @@ class CliTests(unittest.TestCase):
                 "prim",
                 "--beam-width",
                 "2",
+            ])
+
+    def test_solver_cli_rejects_hybrid_without_beam(self):
+        with self.assertRaises(SystemExit):
+            solver.parseArguments([
+                "--beam-start-components",
+                "20",
             ])
 
     def test_solver_cli_help_describes_new_score_mode(self):
@@ -1132,6 +1144,45 @@ class PostProcessTests(unittest.TestCase):
         self.assertIs(final_connection.own_segment, root)
         self.assertIs(root.pic_connection_matrix[0, 1], candidate)
 
+    def test_trim_and_fill_can_place_leftover_components_as_units(self):
+        score_dict = {}
+        left = self.make_segment(1, score_dict, max_size=3)
+        first = self.make_segment(2, score_dict, max_size=3)
+        second = self.make_segment(3, score_dict, max_size=3)
+        root = self.make_segment(4, score_dict, max_size=3)
+        anchor = self.make_segment(5, score_dict, max_size=3)
+        root.pic_connection_matrix = np.asarray(
+            [
+                [left, 0, 0],
+                [anchor, 0, 0],
+                [0, 0, 0],
+            ],
+            dtype=object,
+        )
+        root.binary_connection_matrix = (
+            root.pic_connection_matrix != 0).astype(int)
+        first.pic_connection_matrix = np.asarray(
+            [[first, second]],
+            dtype=object,
+        )
+        first.binary_connection_matrix = np.asarray([[1, 1]])
+        score_dict[
+            left.piece_number,
+            solver.JoinDirection.RIGHT,
+            first.piece_number,
+        ] = 1
+        segments = [root, first]
+
+        solver.trimAndFillAssembly(
+            segments,
+            show_progress=False,
+            preserve_components=True,
+        )
+
+        self.assertEqual([root], segments)
+        self.assertIs(root.pic_connection_matrix[0, 1], first)
+        self.assertIs(root.pic_connection_matrix[0, 2], second)
+
 
 class ConnectionTests(unittest.TestCase):
     def make_pair_for_best_buddy_tests(self):
@@ -1725,6 +1776,33 @@ class KruskalAssemblyTests(unittest.TestCase):
         self.assertEqual(len(scan_history), queue_rounds)
         self.assertEqual(len(scan_segments), len(queue_segments))
 
+    def test_priority_queue_top_connections_preserves_pop_order(self):
+        segments, _original_size = self.make_segments()
+        queue = solver.KruskalConnectionPriorityQueue(segments)
+
+        def connection_key(connection):
+            return (
+                connection.score,
+                connection.own_segment.piece_number,
+                connection.join_segment.piece_number,
+            )
+
+        peeked = [
+            connection_key(connection)
+            for connection in queue.topConnections(segments, 3)
+        ]
+        peeked_again = [
+            connection_key(connection)
+            for connection in queue.topConnections(segments, 3)
+        ]
+        popped = [
+            connection_key(queue.popBestConnection(segments))
+            for _ in range(3)
+        ]
+
+        self.assertEqual(peeked, peeked_again)
+        self.assertEqual(peeked, popped)
+
     def test_beam_search_with_one_candidate_matches_greedy_queue(self):
         queue_segments, queue_original_size = self.make_segments()
         beam_segments, beam_original_size = self.make_segments()
@@ -1811,6 +1889,77 @@ class KruskalAssemblyTests(unittest.TestCase):
                 (7, 644.3093314857682, 1, 3),
             ],
             beam_history,
+        )
+
+    def test_hybrid_beam_matches_queue_then_beam_sequence(self):
+        threshold = 4
+        manual_segments, manual_original_size = self.make_segments()
+        hybrid_segments, hybrid_original_size = self.make_segments()
+        manual_history = []
+        hybrid_history = []
+
+        manual_queue = solver.KruskalConnectionPriorityQueue(manual_segments)
+        manual_rounds = 0
+        while len(manual_segments) > threshold:
+            best_connection = manual_queue.popBestConnection(manual_segments)
+            self.assertIsNotNone(best_connection.pic_connection_matrix)
+            solver.joinPieces(
+                best_connection,
+                manual_segments,
+                manual_original_size,
+            )
+            manual_queue.addConnectionsFor(
+                best_connection.own_segment,
+                manual_segments,
+            )
+            manual_history.append((
+                manual_rounds,
+                best_connection.score,
+                best_connection.own_segment.piece_number,
+                best_connection.join_segment.piece_number,
+            ))
+            manual_rounds += 1
+
+        def record_manual_beam(best_connection, round_number):
+            manual_history.append((
+                manual_rounds + round_number,
+                best_connection.score,
+                best_connection.own_segment.piece_number,
+                best_connection.join_segment.piece_number,
+            ))
+
+        beam_rounds = solver.assembleKruskalBeamSearch(
+            manual_segments,
+            manual_original_size,
+            beam_width=2,
+            beam_candidates=2,
+            on_join=record_manual_beam,
+        )
+        manual_rounds += beam_rounds
+
+        def record_hybrid_join(best_connection, round_number):
+            hybrid_history.append((
+                round_number,
+                best_connection.score,
+                best_connection.own_segment.piece_number,
+                best_connection.join_segment.piece_number,
+            ))
+
+        hybrid_rounds = solver.assembleKruskalHybridBeamSearch(
+            hybrid_segments,
+            hybrid_original_size,
+            beam_start_components=threshold,
+            beam_width=2,
+            beam_candidates=2,
+            on_join=record_hybrid_join,
+        )
+
+        self.assertEqual(manual_rounds, hybrid_rounds)
+        self.assertEqual(manual_history, hybrid_history)
+        self.assertEqual(len(manual_segments), len(hybrid_segments))
+        self.assertEqual(
+            self.segment_layout(manual_segments[0]),
+            self.segment_layout(hybrid_segments[0]),
         )
 
     def test_kruskal_connection_preserves_pieces_in_component_holes(self):

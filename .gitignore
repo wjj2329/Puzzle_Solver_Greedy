@@ -30,6 +30,10 @@ dist/
 output_image/*
 !output_image/.gitkeep
 
+# Local wallpaper/Spotlight images used only for private benchmarking
+input_image/test_set/
+input_image/windows_wallpaper_*.jpg
+
 # Legacy generated output locations
 images/*
 !images/.gitkeep

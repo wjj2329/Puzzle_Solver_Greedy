@@ -33,41 +33,53 @@ def iterPieces(segment):
 
 
 def trimToBestFrame(segment):
-    frame_height = segment.max_height
-    frame_width = segment.max_width
-    matrix = segment.pic_connection_matrix
-    height, width = matrix.shape
-    row_starts = range(min(0, height - frame_height), max(0, height - frame_height) + 1)
-    col_starts = range(min(0, width - frame_width), max(0, width - frame_width) + 1)
-
     best_frame = None
     best_trimmed = None
     best_key = None
-    for row_start in row_starts:
-        for col_start in col_starts:
-            frame = np.zeros((frame_height, frame_width), dtype=object)
-            trimmed = []
-            for row in range(height):
-                for col in range(width):
-                    piece = matrix[row, col]
-                    if piece == 0:
-                        continue
-                    frame_row = row - row_start
-                    frame_col = col - col_start
-                    if 0 <= frame_row < frame_height and 0 <= frame_col < frame_width:
-                        frame[frame_row, frame_col] = piece
-                    else:
-                        trimmed.append(piece)
-            occupied = int(np.count_nonzero(frame))
-            key = (occupied, -len(trimmed), -abs(row_start), -abs(col_start))
-            if best_key is None or key > best_key:
-                best_key = key
-                best_frame = frame
-                best_trimmed = trimmed
+    for row_start, col_start in trimFrameStarts(segment):
+        frame, trimmed = trimFrame(segment, row_start, col_start)
+        occupied = int(np.count_nonzero(frame))
+        key = (occupied, -len(trimmed), -abs(row_start), -abs(col_start))
+        if best_key is None or key > best_key:
+            best_key = key
+            best_frame = frame
+            best_trimmed = trimmed
 
     segment.pic_connection_matrix = best_frame
     segment.binary_connection_matrix = (best_frame != 0).astype(int)
     return best_trimmed
+
+
+def trimFrame(segment, row_start, col_start):
+    frame_height = segment.max_height
+    frame_width = segment.max_width
+    matrix = segment.pic_connection_matrix
+    height, width = matrix.shape
+    frame = np.zeros((frame_height, frame_width), dtype=object)
+    trimmed = []
+    for row in range(height):
+        for col in range(width):
+            piece = matrix[row, col]
+            if piece == 0:
+                continue
+            frame_row = row - row_start
+            frame_col = col - col_start
+            if 0 <= frame_row < frame_height and 0 <= frame_col < frame_width:
+                frame[frame_row, frame_col] = piece
+            else:
+                trimmed.append(piece)
+    return frame, trimmed
+
+
+def trimFrameStarts(segment):
+    frame_height = segment.max_height
+    frame_width = segment.max_width
+    height, width = segment.pic_connection_matrix.shape
+    row_starts = range(min(0, height - frame_height), max(0, height - frame_height) + 1)
+    col_starts = range(min(0, width - frame_width), max(0, width - frame_width) + 1)
+    for row_start in row_starts:
+        for col_start in col_starts:
+            yield row_start, col_start
 
 
 def adjacentPieces(frame, row, col):
@@ -229,17 +241,274 @@ def fillHoles(
     return filled
 
 
-def trimAndFillAssembly(segment_list, show_progress=True):
+def componentTargetPositions(component, row_offset, col_offset):
+    component_matrix = component.pic_connection_matrix
+    return {
+        (int(row + row_offset), int(col + col_offset))
+        for row, col in zip(*np.where(component_matrix != 0))
+    }
+
+
+def componentPlacementScore(frame, component, row_offset, col_offset):
+    score_dict = component.score_dict
+    total = 0.0
+    count = 0
+    component_matrix = component.pic_connection_matrix
+    height, width = frame.shape
+    target_positions = componentTargetPositions(
+        component,
+        row_offset,
+        col_offset,
+    )
+    for row, col in zip(*np.where(component_matrix != 0)):
+        piece = component_matrix[row, col]
+        frame_row = row + row_offset
+        frame_col = col + col_offset
+        for row_delta, col_delta, direction in NEIGHBOR_DIRECTIONS:
+            neighbor_row = frame_row + row_delta
+            neighbor_col = frame_col + col_delta
+            if not (0 <= neighbor_row < height and 0 <= neighbor_col < width):
+                continue
+            if (neighbor_row, neighbor_col) in target_positions:
+                continue
+            neighbor = frame[neighbor_row, neighbor_col]
+            if neighbor == 0:
+                continue
+            score = score_dict.get(
+                (neighbor.piece_number, direction, piece.piece_number),
+                math.inf,
+            )
+            if math.isinf(score):
+                return math.inf, count
+            total += score
+            count += 1
+    if count == 0:
+        return math.inf, count
+    return total / count, count
+
+
+def componentOverlap(frame, component, row_offset, col_offset):
+    overlap = []
+    component_matrix = component.pic_connection_matrix
+    for row, col in zip(*np.where(component_matrix != 0)):
+        piece = frame[row + row_offset, col + col_offset]
+        if piece != 0:
+            overlap.append(piece)
+    return overlap
+
+
+def iterComponentPlacements(frame, component, allow_overlap=False):
+    component_matrix = component.pic_connection_matrix
+    occupied_rows, occupied_cols = np.where(component_matrix != 0)
+    if len(occupied_rows) == 0:
+        return
+
+    frame_height, frame_width = frame.shape
+    min_row = int(occupied_rows.min())
+    max_row = int(occupied_rows.max())
+    min_col = int(occupied_cols.min())
+    max_col = int(occupied_cols.max())
+
+    for row_offset in range(-min_row, frame_height - max_row):
+        for col_offset in range(-min_col, frame_width - max_col):
+            if allow_overlap:
+                yield row_offset, col_offset
+                continue
+            blocked = False
+            for row, col in zip(occupied_rows, occupied_cols):
+                if frame[row + row_offset, col + col_offset] != 0:
+                    blocked = True
+                    break
+            if not blocked:
+                yield row_offset, col_offset
+
+
+def placeComponent(frame, component, row_offset, col_offset):
+    displaced = []
+    component_matrix = component.pic_connection_matrix
+    for row, col in zip(*np.where(component_matrix != 0)):
+        frame_row = row + row_offset
+        frame_col = col + col_offset
+        previous = frame[frame_row, frame_col]
+        if previous != 0:
+            displaced.append(previous)
+        frame[frame_row, frame_col] = component_matrix[row, col]
+    return displaced
+
+
+def placeComponentsInFrame(frame, components, allow_overlap=False):
+    unplaced = list(components)
+    placed = 0
+    placed_pieces = 0
+    displaced_pieces = []
+    total_neighbor_count = 0
+    total_score = 0.0
+    while unplaced:
+        best = None
+        for component_index, component in enumerate(unplaced):
+            component_size = componentSize(component)
+            for row_offset, col_offset in iterComponentPlacements(
+                    frame,
+                    component,
+                    allow_overlap=allow_overlap):
+                overlap = componentOverlap(
+                    frame,
+                    component,
+                    row_offset,
+                    col_offset,
+                )
+                net_new_pieces = component_size - len(overlap)
+                if net_new_pieces <= 0:
+                    continue
+                score, neighbor_count = componentPlacementScore(
+                    frame,
+                    component,
+                    row_offset,
+                    col_offset,
+                )
+                if math.isinf(score):
+                    continue
+                item = (
+                    -net_new_pieces,
+                    -neighbor_count,
+                    score,
+                    len(overlap),
+                    -component_size,
+                    component.piece_number,
+                    row_offset,
+                    col_offset,
+                    component_index,
+                )
+                if best is None or item < best:
+                    best = item
+        if best is None:
+            break
+        (
+            _net_new_pieces,
+            _neighbor_count,
+            score,
+            _overlap_count,
+            _component_size,
+            _piece_number,
+            row_offset,
+            col_offset,
+            component_index,
+        ) = best
+        neighbor_count = -_neighbor_count
+        component = unplaced.pop(component_index)
+        displaced_pieces.extend(
+            placeComponent(frame, component, row_offset, col_offset)
+        )
+        placed += 1
+        placed_pieces += componentSize(component)
+        total_neighbor_count += neighbor_count
+        total_score += score * neighbor_count
+
+    return (
+        placed,
+        placed_pieces,
+        unplaced,
+        displaced_pieces,
+        total_neighbor_count,
+        total_score,
+    )
+
+
+def placeComponents(segment, components):
+    frame = segment.pic_connection_matrix
+    (
+        placed,
+        _placed_pieces,
+        unplaced,
+        displaced_pieces,
+        _neighbor_count,
+        _score,
+    ) = placeComponentsInFrame(
+        frame,
+        components,
+    )
+    segment.binary_connection_matrix = (frame != 0).astype(int)
+    return placed, unplaced, displaced_pieces
+
+
+def trimToBestFrameWithComponents(segment, components):
+    best_frame = None
+    best_trimmed = None
+    best_unplaced = None
+    best_key = None
+    for row_start, col_start in trimFrameStarts(segment):
+        frame, trimmed = trimFrame(segment, row_start, col_start)
+        root_occupied = int(np.count_nonzero(frame))
+        (
+            placed,
+            placed_pieces,
+            unplaced,
+            displaced,
+            neighbor_count,
+            score,
+        ) = placeComponentsInFrame(
+            frame,
+            components,
+            allow_overlap=True,
+        )
+        occupied = int(np.count_nonzero(frame))
+        key = (
+            occupied,
+            placed_pieces,
+            placed,
+            neighbor_count,
+            -score,
+            root_occupied,
+            -len(trimmed),
+            -abs(row_start),
+            -abs(col_start),
+        )
+        if best_key is None or key > best_key:
+            best_key = key
+            best_frame = frame
+            best_trimmed = trimmed + displaced
+            best_unplaced = unplaced
+
+    segment.pic_connection_matrix = best_frame
+    segment.binary_connection_matrix = (best_frame != 0).astype(int)
+    placed = len(components) - len(best_unplaced)
+    return best_trimmed, placed, best_unplaced
+
+
+def trimAndFillAssembly(
+        segment_list,
+        show_progress=True,
+        preserve_components=False):
     if not segment_list:
         return None
 
     root = max(segment_list, key=componentSize)
-    candidates = []
+    leftover_components = []
     for segment in segment_list:
         if segment is root:
             continue
-        candidates.extend(iterPieces(segment))
-    candidates.extend(trimToBestFrame(root))
+        leftover_components.append(segment)
+    if preserve_components:
+        trimmed_pieces, placed_components, leftover_components = (
+            trimToBestFrameWithComponents(
+                root,
+                leftover_components,
+            )
+        )
+    else:
+        trimmed_pieces = trimToBestFrame(root)
+        placed_components = 0
+    if preserve_components and leftover_components:
+        additional_placed, leftover_components, displaced_pieces = placeComponents(
+            root,
+            leftover_components,
+        )
+        placed_components += additional_placed
+        trimmed_pieces.extend(displaced_pieces)
+    candidates = []
+    for component in leftover_components:
+        candidates.extend(iterPieces(component))
+    candidates.extend(trimmed_pieces)
 
     if show_progress:
         missing = root.max_height * root.max_width - componentSize(root)
@@ -248,6 +517,12 @@ def trimAndFillAssembly(segment_list, show_progress=True):
             f"starting with {missing} holes and {len(candidates)} candidates",
             flush=True,
         )
+        if preserve_components:
+            print(
+                "Trim/fill post-process: "
+                f"placed {placed_components} leftover components",
+                flush=True,
+            )
     filled = fillHoles(root, candidates, show_progress=show_progress)
     segment_list[:] = [root]
 

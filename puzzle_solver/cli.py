@@ -131,10 +131,25 @@ def buildArgumentParser():
         help="Candidate joins to branch from each beam state. Omit to match beam width.",
     )
     parser.add_argument(
+        "--beam-start-components",
+        type=int,
+        default=None,
+        help=(
+            "Run greedy Kruskal queue assembly until this many components "
+            "remain, then switch to beam search. Omit for full beam search."
+        ),
+    )
+    parser.add_argument(
         "--trim-fill",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Trim the greedy tree to the puzzle frame and fill remaining holes.",
+    )
+    parser.add_argument(
+        "--trim-fill-components",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Try to place leftover assembled components as units before filling individual pieces.",
     )
     parser.add_argument(
         "--score-workers",
@@ -208,6 +223,16 @@ def parseArguments(argv=None):
         raise SystemExit("--beam-width must be greater than 0")
     if args.beam_candidates is not None and args.beam_candidates <= 0:
         raise SystemExit("--beam-candidates must be greater than 0")
+    if args.beam_start_components is not None and args.beam_start_components <= 1:
+        raise SystemExit("--beam-start-components must be greater than 1")
     if args.beam_width > 1 and args.assembly_type != AssemblyType.KRUSKAL:
         raise SystemExit("--beam-width is only supported with Kruskal assembly")
+    if args.beam_start_components is not None and args.beam_width <= 1:
+        raise SystemExit(
+            "--beam-start-components requires --beam-width greater than 1")
+    if (
+            args.beam_start_components is not None
+            and args.assembly_type != AssemblyType.KRUSKAL):
+        raise SystemExit(
+            "--beam-start-components is only supported with Kruskal assembly")
     return args

@@ -118,17 +118,20 @@ class KruskalConnectionPriorityQueue:
             return []
 
         active_segments = set(segment_list)
-        heap_copy = list(self._heap)
         connections = []
-        while heap_copy and len(connections) < limit:
-            item = heapq.heappop(heap_copy)
+        retained_items = []
+        while self._heap and len(connections) < limit:
+            item = heapq.heappop(self._heap)
             connection = self._connectionFromItem(
                 item,
                 active_segments,
                 materialize=False,
             )
             if connection is not None:
+                retained_items.append(item)
                 connections.append(connection)
+        for item in retained_items:
+            heapq.heappush(self._heap, item)
         return connections
 
     def cloneForBranch(self, segment_mapping, excluded_segments):
@@ -512,6 +515,7 @@ def assembleKruskalBeamSearch(
     if beam_candidates is None:
         beam_candidates = beam_width
 
+    replay_source = cloneSegmentList(segment_list) if on_join is not None else None
     states = [
         KruskalBeamState(
             segment_list,
@@ -554,33 +558,60 @@ def assembleKruskalBeamSearch(
             break
 
         selected_specs = heapq.nsmallest(beam_width, child_specs)
+        selected_count_by_state = {}
+        selected_seen_by_state = {}
+        for _path_score, _sequence, state, _connection in selected_specs:
+            selected_count_by_state[state] = (
+                selected_count_by_state.get(state, 0) + 1
+            )
         states = []
         for path_score, _sequence, state, connection in selected_specs:
             if connection is None:
                 states.append(state)
                 continue
 
-            (
-                child_segments,
-                segment_mapping,
-                piece_mapping,
-            ) = cloneSegmentListWithMapping(
-                state.segment_list,
-                include_piece_mapping=True,
+            selected_seen_by_state[state] = (
+                selected_seen_by_state.get(state, 0) + 1
             )
-            child_own_segment = segment_mapping.get(
-                connection.own_segment)
-            child_join_segment = segment_mapping.get(
-                connection.join_segment)
-            if child_own_segment is None or child_join_segment is None:
-                continue
+            can_reuse_state = (
+                selected_seen_by_state[state]
+                == selected_count_by_state[state]
+            )
+            if can_reuse_state:
+                child_segments = state.segment_list
+                child_own_segment = connection.own_segment
+                child_join_segment = connection.join_segment
+                child_connection = connection
+                if child_connection.pic_connection_matrix is None:
+                    child_own_segment.materializeKruskalConnection(
+                        child_connection)
+                child_queue = state.connection_queue
+            else:
+                (
+                    child_segments,
+                    segment_mapping,
+                    piece_mapping,
+                ) = cloneSegmentListWithMapping(
+                    state.segment_list,
+                    include_piece_mapping=True,
+                )
+                child_own_segment = segment_mapping.get(
+                    connection.own_segment)
+                child_join_segment = segment_mapping.get(
+                    connection.join_segment)
+                if child_own_segment is None or child_join_segment is None:
+                    continue
 
-            child_connection = cloneKruskalConnectionForBranch(
-                connection,
-                child_own_segment,
-                child_join_segment,
-                piece_mapping,
-            )
+                child_connection = cloneKruskalConnectionForBranch(
+                    connection,
+                    child_own_segment,
+                    child_join_segment,
+                    piece_mapping,
+                )
+                child_queue = state.connection_queue.cloneForBranch(
+                    segment_mapping,
+                    (connection.own_segment, connection.join_segment),
+                )
             if child_connection.pic_connection_matrix is None:
                 continue
 
@@ -591,20 +622,20 @@ def assembleKruskalBeamSearch(
                 child_join_segment.piece_number,
             )
             joinPieces(child_connection, child_segments, original_size)
-            child_queue = state.connection_queue.cloneForBranch(
-                segment_mapping,
-                (connection.own_segment, connection.join_segment),
-            )
             child_queue.addConnectionsFor(
                 child_connection.own_segment,
                 child_segments,
             )
+            if on_join is None:
+                child_history = ()
+            else:
+                child_history = state.history + (history_item,)
             child_state = KruskalBeamState(
                 child_segments,
                 connection_queue=child_queue,
                 path_score=path_score,
                 rounds=state.rounds + 1,
-                history=state.history + (history_item,),
+                history=child_history,
             )
             states.append(child_state)
 
@@ -635,7 +666,7 @@ def assembleKruskalBeamSearch(
     )
     if on_join is not None:
         replayBeamHistory(
-            segment_list,
+            replay_source,
             best_state.history,
             original_size,
             boost_priority_of_big_pieces_joining,
@@ -643,6 +674,71 @@ def assembleKruskalBeamSearch(
         )
     segment_list[:] = best_state.segment_list
     return best_state.rounds
+
+
+def assembleKruskalHybridBeamSearch(
+        segment_list,
+        original_size,
+        beam_start_components,
+        beam_width=2,
+        beam_candidates=None,
+        boost_priority_of_big_pieces_joining=False,
+        compare_type=CompareWithOtherSegments.ONLY_BEST,
+        compare_mode=CompareWithOtherSegments.ONLY_BEST,
+        show_progress=False,
+        on_join=None):
+    if beam_start_components is None or len(segment_list) <= beam_start_components:
+        return assembleKruskalBeamSearch(
+            segment_list,
+            original_size,
+            beam_width,
+            beam_candidates,
+            boost_priority_of_big_pieces_joining,
+            compare_type,
+            compare_mode,
+            show_progress,
+            on_join,
+        )
+
+    connection_queue = KruskalConnectionPriorityQueue(
+        segment_list,
+        boost_priority_of_big_pieces_joining,
+        compare_type,
+        compare_mode,
+    )
+    rounds = 0
+    while len(segment_list) > beam_start_components:
+        best_connection = connection_queue.popBestConnection(segment_list)
+        if best_connection.pic_connection_matrix is None:
+            return rounds
+        joinPieces(best_connection, segment_list, original_size)
+        connection_queue.addConnectionsFor(
+            best_connection.own_segment,
+            segment_list,
+        )
+        if on_join is not None:
+            on_join(best_connection, rounds)
+        rounds += 1
+
+    if len(segment_list) <= 1:
+        return rounds
+
+    def offsetJoinRound(best_connection, beam_round):
+        if on_join is not None:
+            on_join(best_connection, rounds + beam_round)
+
+    beam_rounds = assembleKruskalBeamSearch(
+        segment_list,
+        original_size,
+        beam_width,
+        beam_candidates,
+        boost_priority_of_big_pieces_joining,
+        compare_type,
+        compare_mode,
+        show_progress,
+        offsetJoinRound,
+    )
+    return rounds + beam_rounds
 
 
 def replayBeamHistory(

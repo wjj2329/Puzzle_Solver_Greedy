@@ -1,6 +1,7 @@
 from .assembly import (
     KruskalConnectionPriorityQueue,
     assembleKruskalBeamSearch,
+    assembleKruskalHybridBeamSearch,
     assembleKruskalWithPriorityQueue,
     calculateSinglePieceConnection,
     cloneSegmentList,

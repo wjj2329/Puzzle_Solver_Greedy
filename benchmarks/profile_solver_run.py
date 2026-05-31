@@ -59,6 +59,82 @@ def print_timings(timings, total_elapsed):
         print(f"  {name:24s} {elapsed:9.3f}s {percent:6.1f}%")
 
 
+def piece_position(piece_number, width):
+    piece_index = piece_number - 1
+    return divmod(piece_index, width)
+
+
+def is_correct_neighbor(piece, neighbor, row_delta, col_delta):
+    piece_row, piece_col = piece_position(
+        piece.piece_number,
+        piece.max_height,
+    )
+    neighbor_row, neighbor_col = piece_position(
+        neighbor.piece_number,
+        neighbor.max_height,
+    )
+    return (
+        neighbor_row - piece_row == row_delta
+        and neighbor_col - piece_col == col_delta
+    )
+
+
+def assembly_quality(segment_list):
+    if not segment_list:
+        return {
+            "adjacent": 0,
+            "correct": 0,
+            "incorrect": 0,
+            "possible": 0,
+            "coverage": 0.0,
+            "precision": 0.0,
+        }
+
+    frame_height = segment_list[0].max_height
+    frame_width = segment_list[0].max_width
+    possible = (
+        frame_height * (frame_width - 1)
+        + frame_width * (frame_height - 1)
+    )
+    adjacent = 0
+    correct = 0
+    for segment in segment_list:
+        matrix = segment.pic_connection_matrix
+        rows, cols = matrix.shape
+        for row in range(rows):
+            for col in range(cols):
+                piece = matrix[row, col]
+                if piece == 0:
+                    continue
+                if col + 1 < cols and matrix[row, col + 1] != 0:
+                    adjacent += 1
+                    if is_correct_neighbor(piece, matrix[row, col + 1], 0, 1):
+                        correct += 1
+                if row + 1 < rows and matrix[row + 1, col] != 0:
+                    adjacent += 1
+                    if is_correct_neighbor(piece, matrix[row + 1, col], 1, 0):
+                        correct += 1
+    incorrect = adjacent - correct
+    return {
+        "adjacent": adjacent,
+        "correct": correct,
+        "incorrect": incorrect,
+        "possible": possible,
+        "coverage": correct / possible if possible else 0.0,
+        "precision": correct / adjacent if adjacent else 0.0,
+    }
+
+
+def print_quality(label, quality):
+    print(
+        f"{label}: adjacent={quality['adjacent']} "
+        f"correct={quality['correct']} incorrect={quality['incorrect']} "
+        f"possible={quality['possible']} "
+        f"coverage={quality['coverage']:.3f} "
+        f"precision={quality['precision']:.3f}"
+    )
+
+
 def run_profile(args):
     timer = PhaseTimer()
     output_dir = args.output_dir
@@ -67,6 +143,10 @@ def run_profile(args):
     color_type = parse_enum(Solver.ColorType, args.color_type)
     score_algorithm = parse_enum(Solver.ScoreAlgorithm, args.score_algorithm)
     score_mode = parse_enum(Solver.ScoreMode, args.score_mode)
+    compare_type = parse_enum(
+        Solver.CompareWithOtherSegments,
+        args.compare_type,
+    )
     total_started = time.perf_counter()
 
     with timer.time("load_image"):
@@ -133,8 +213,8 @@ def run_profile(args):
             kruskal_queue = Solver.KruskalConnectionPriorityQueue(
                 segments,
                 args.boost_big_piece_priority,
-                Solver.CompareWithOtherSegments.ONLY_BEST,
-                Solver.CompareWithOtherSegments.ONLY_BEST,
+                compare_type,
+                compare_type,
             )
 
     rounds = 0
@@ -152,26 +232,41 @@ def run_profile(args):
                 output_dir=output_dir,
             )
 
-        with timer.time("assembly_beam_search"):
-            rounds = Solver.assembleKruskalBeamSearch(
-                segments,
-                original_size,
-                beam_width=args.beam_width,
-                beam_candidates=args.beam_candidates,
-                boost_priority_of_big_pieces_joining=args.boost_big_piece_priority,
-                compare_type=Solver.CompareWithOtherSegments.ONLY_BEST,
-                compare_mode=Solver.CompareWithOtherSegments.ONLY_BEST,
-                show_progress=args.show_progress,
-                on_join=save_beam_join,
-            )
+        if args.beam_start_components is None:
+            with timer.time("assembly_beam_search"):
+                rounds = Solver.assembleKruskalBeamSearch(
+                    segments,
+                    original_size,
+                    beam_width=args.beam_width,
+                    beam_candidates=args.beam_candidates,
+                    boost_priority_of_big_pieces_joining=args.boost_big_piece_priority,
+                    compare_type=compare_type,
+                    compare_mode=compare_type,
+                    show_progress=args.show_progress,
+                    on_join=save_beam_join if args.save_assembly else None,
+                )
+        else:
+            with timer.time("assembly_hybrid_beam_search"):
+                rounds = Solver.assembleKruskalHybridBeamSearch(
+                    segments,
+                    original_size,
+                    beam_start_components=args.beam_start_components,
+                    beam_width=args.beam_width,
+                    beam_candidates=args.beam_candidates,
+                    boost_priority_of_big_pieces_joining=args.boost_big_piece_priority,
+                    compare_type=compare_type,
+                    compare_mode=compare_type,
+                    show_progress=args.show_progress,
+                    on_join=save_beam_join if args.save_assembly else None,
+                )
     while len(segments) > 1 and args.assembly_strategy != "beam":
         if kruskal_queue is None:
             with timer.time("assembly_find_best"):
                 best_connection = Solver.findBestConnectionKruskal(
                     segments,
-                    Solver.CompareWithOtherSegments.ONLY_BEST,
+                    compare_type,
                     args.boost_big_piece_priority,
-                    Solver.CompareWithOtherSegments.ONLY_BEST,
+                    compare_type,
                 )
         else:
             with timer.time("assembly_pop_best"):
@@ -218,6 +313,7 @@ def run_profile(args):
             Solver.trimAndFillAssembly(
                 segments,
                 show_progress=args.show_progress,
+                preserve_components=args.trim_fill_components,
             )
 
     total_elapsed = time.perf_counter() - total_started
@@ -232,6 +328,7 @@ def run_profile(args):
     print(f"color_type: {color_type.name.lower()}")
     print(f"score_algorithm: {score_algorithm.name.lower()}")
     print(f"score_mode: {score_mode.name.lower()}")
+    print(f"compare_type: {compare_type.name.lower()}")
     print(f"score_storage: {args.score_storage}")
     print(
         f"score_executor: {args.score_executor} "
@@ -241,8 +338,12 @@ def run_profile(args):
     if args.assembly_strategy == "beam":
         print(f"beam_width: {args.beam_width}")
         print(f"beam_candidates: {args.beam_candidates or args.beam_width}")
+        print(f"beam_start_components: {args.beam_start_components}")
+    if args.quality_report:
+        print_quality("quality", assembly_quality(segments))
     print(f"save_segments: {args.save_segments}")
     print(f"save_assembly: {args.save_assembly}")
+    print(f"trim_fill_components: {args.trim_fill_components}")
     print(f"total: {total_elapsed:.3f}s")
     print_timings(timer.timings, total_elapsed)
 
@@ -278,6 +379,11 @@ def main():
         help="Score interpretation mode: dissimilarity or reliability.",
     )
     parser.add_argument(
+        "--compare-type",
+        default="only_best",
+        help="Join comparison formula: only_best or compare_with_second.",
+    )
+    parser.add_argument(
         "--score-executor",
         choices=("serial", "thread", "process"),
         default="process",
@@ -303,6 +409,7 @@ def main():
     )
     parser.add_argument("--beam-width", type=int, default=2)
     parser.add_argument("--beam-candidates", type=int, default=None)
+    parser.add_argument("--beam-start-components", type=int, default=None)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument(
         "--skip-best-buddy",
@@ -330,6 +437,11 @@ def main():
         help="Run and time trim/fill after assembly.",
     )
     parser.add_argument(
+        "--trim-fill-components",
+        action="store_true",
+        help="Place leftover components as units before individual hole filling.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=ROOT / "output_image" / "profile_run",
@@ -345,6 +457,11 @@ def main():
         action="store_true",
         help="Show solver progress output while profiling.",
     )
+    parser.add_argument(
+        "--quality-report",
+        action="store_true",
+        help="Report how many final neighboring piece pairs match the source image.",
+    )
     args = parser.parse_args()
 
     if args.piece_size <= 0:
@@ -355,6 +472,11 @@ def main():
         raise SystemExit("--beam-width must be greater than 0")
     if args.beam_candidates is not None and args.beam_candidates <= 0:
         raise SystemExit("--beam-candidates must be greater than 0")
+    if args.beam_start_components is not None and args.beam_start_components <= 1:
+        raise SystemExit("--beam-start-components must be greater than 1")
+    if args.beam_start_components is not None and args.assembly_strategy != "beam":
+        raise SystemExit(
+            "--beam-start-components is only supported with --assembly-strategy beam")
 
     run_profile(args)
 
