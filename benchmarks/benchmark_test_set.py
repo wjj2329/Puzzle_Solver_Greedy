@@ -22,11 +22,17 @@ class Recipe:
     assembly_strategy: str = "queue"
     best_buddy: bool = True
     boost_big_piece_priority: bool = False
+    relax_frame_bounds: bool = False
+    endgame_search: bool = False
     compare_type: Solver.CompareWithOtherSegments = (
         Solver.CompareWithOtherSegments.ONLY_BEST
     )
     trim_fill: bool = True
     trim_fill_components: bool = False
+    trim_fill_conservative: bool = False
+    trim_fill_border: bool = False
+    trim_fill_component_frame: bool = False
+    trim_fill_edge_preserving: bool = False
     beam_width: int = 2
     beam_candidates: int | None = None
     beam_start_components: int | None = None
@@ -63,6 +69,53 @@ RECIPES = {
         boost_big_piece_priority=True,
         compare_type=Solver.CompareWithOtherSegments.COMPARE_WITH_SECOND,
         trim_fill_components=True,
+    ),
+    "contact_conservative": Recipe(
+        "contact_conservative",
+        best_buddy=False,
+        boost_big_piece_priority=True,
+        trim_fill_conservative=True,
+    ),
+    "contact_border": Recipe(
+        "contact_border",
+        best_buddy=False,
+        boost_big_piece_priority=True,
+        trim_fill_border=True,
+    ),
+    "contact_component_frame": Recipe(
+        "contact_component_frame",
+        best_buddy=False,
+        boost_big_piece_priority=True,
+        trim_fill_component_frame=True,
+    ),
+    "contact_compare_relaxed": Recipe(
+        "contact_compare_relaxed",
+        best_buddy=False,
+        boost_big_piece_priority=True,
+        relax_frame_bounds=True,
+        compare_type=Solver.CompareWithOtherSegments.COMPARE_WITH_SECOND,
+        trim_fill_component_frame=True,
+        score_algorithm=Solver.ScoreAlgorithm.MGC,
+        score_mode=Solver.ScoreMode.RELIABILITY,
+    ),
+    "contact_compare_edge_preserving": Recipe(
+        "contact_compare_edge_preserving",
+        best_buddy=False,
+        boost_big_piece_priority=True,
+        compare_type=Solver.CompareWithOtherSegments.COMPARE_WITH_SECOND,
+        trim_fill_edge_preserving=True,
+        score_algorithm=Solver.ScoreAlgorithm.MGC,
+        score_mode=Solver.ScoreMode.RELIABILITY,
+    ),
+    "contact_compare_endgame": Recipe(
+        "contact_compare_endgame",
+        best_buddy=False,
+        boost_big_piece_priority=True,
+        endgame_search=True,
+        compare_type=Solver.CompareWithOtherSegments.COMPARE_WITH_SECOND,
+        trim_fill_edge_preserving=True,
+        score_algorithm=Solver.ScoreAlgorithm.MGC,
+        score_mode=Solver.ScoreMode.RELIABILITY,
     ),
     "contact_compare_raw": Recipe(
         "contact_compare_raw",
@@ -178,6 +231,71 @@ ASSEMBLY_MATRIX = (
             "best_buddy": False,
             "boost_big_piece_priority": True,
             "trim_fill": True,
+        },
+    ),
+    (
+        "kruskal_contact_conservative",
+        {
+            "assembly_strategy": "queue",
+            "best_buddy": False,
+            "boost_big_piece_priority": True,
+            "trim_fill": True,
+            "trim_fill_conservative": True,
+        },
+    ),
+    (
+        "kruskal_contact_border",
+        {
+            "assembly_strategy": "queue",
+            "best_buddy": False,
+            "boost_big_piece_priority": True,
+            "trim_fill": True,
+            "trim_fill_border": True,
+        },
+    ),
+    (
+        "kruskal_contact_component_frame",
+        {
+            "assembly_strategy": "queue",
+            "best_buddy": False,
+            "boost_big_piece_priority": True,
+            "trim_fill": True,
+            "trim_fill_component_frame": True,
+        },
+    ),
+    (
+        "kruskal_contact_compare_relaxed",
+        {
+            "assembly_strategy": "queue",
+            "best_buddy": False,
+            "boost_big_piece_priority": True,
+            "relax_frame_bounds": True,
+            "compare_type": Solver.CompareWithOtherSegments.COMPARE_WITH_SECOND,
+            "trim_fill": True,
+            "trim_fill_component_frame": True,
+        },
+    ),
+    (
+        "kruskal_contact_compare_edge_preserving",
+        {
+            "assembly_strategy": "queue",
+            "best_buddy": False,
+            "boost_big_piece_priority": True,
+            "compare_type": Solver.CompareWithOtherSegments.COMPARE_WITH_SECOND,
+            "trim_fill": True,
+            "trim_fill_edge_preserving": True,
+        },
+    ),
+    (
+        "kruskal_contact_compare_endgame",
+        {
+            "assembly_strategy": "queue",
+            "best_buddy": False,
+            "boost_big_piece_priority": True,
+            "endgame_search": True,
+            "compare_type": Solver.CompareWithOtherSegments.COMPARE_WITH_SECOND,
+            "trim_fill": True,
+            "trim_fill_edge_preserving": True,
         },
     ),
     (
@@ -511,6 +629,9 @@ def assemblePrim(segments, original_size, recipe):
 def runRecipe(base_segments, recipe, args):
     timings = {}
     segments = Solver.cloneSegmentList(base_segments)
+    if recipe.relax_frame_bounds:
+        for segment in segments:
+            segment.enforce_frame_bounds = False
     random.Random(args.seed).shuffle(segments)
     original_size = len(segments)
 
@@ -535,11 +656,24 @@ def runRecipe(base_segments, recipe, args):
     assembly_remaining = len(segments)
 
     started = time.perf_counter()
+    endgame_merges = 0
+    if recipe.endgame_search:
+        endgame_merges = Solver.connectEndgameComponents(
+            segments,
+            show_progress=args.show_progress,
+        )
+    timings["endgame_seconds"] = time.perf_counter() - started
+
+    started = time.perf_counter()
     if recipe.trim_fill:
         Solver.trimAndFillAssembly(
             segments,
             show_progress=args.show_progress,
             preserve_components=recipe.trim_fill_components,
+            conservative_fill=recipe.trim_fill_conservative,
+            border_tiebreak=recipe.trim_fill_border,
+            component_frame_search=recipe.trim_fill_component_frame,
+            edge_preserving=recipe.trim_fill_edge_preserving,
         )
     timings["trim_fill_seconds"] = time.perf_counter() - started
 
@@ -547,6 +681,7 @@ def runRecipe(base_segments, recipe, args):
     return {
         "after_best_buddy": after_best_buddy,
         "assembly_remaining": assembly_remaining,
+        "endgame_merges": endgame_merges,
         "remaining": len(segments),
         "rounds": rounds,
         **timings,
@@ -560,9 +695,15 @@ def recipeRow(recipe):
         "assembly_strategy": recipe.assembly_strategy,
         "best_buddy": recipe.best_buddy,
         "boost_big_piece_priority": recipe.boost_big_piece_priority,
+        "relax_frame_bounds": recipe.relax_frame_bounds,
+        "endgame_search": recipe.endgame_search,
         "compare_type": recipe.compare_type.name.lower(),
         "trim_fill": recipe.trim_fill,
         "trim_fill_components": recipe.trim_fill_components,
+        "trim_fill_conservative": recipe.trim_fill_conservative,
+        "trim_fill_border": recipe.trim_fill_border,
+        "trim_fill_component_frame": recipe.trim_fill_component_frame,
+        "trim_fill_edge_preserving": recipe.trim_fill_edge_preserving,
         "beam_width": recipe.beam_width,
         "beam_candidates": recipe.beam_candidates or recipe.beam_width,
         "beam_start_components": recipe.beam_start_components,
@@ -583,6 +724,7 @@ def benchmarkFieldnames():
         *[field.name for field in fields(Recipe) if field.name != "name"],
         "after_best_buddy",
         "assembly_remaining",
+        "endgame_merges",
         "remaining",
         "rounds",
         "adjacent",
@@ -596,6 +738,7 @@ def benchmarkFieldnames():
         "finalize_seconds",
         "best_buddy_seconds",
         "assembly_seconds",
+        "endgame_seconds",
         "trim_fill_seconds",
         "total_recipe_seconds",
     ]

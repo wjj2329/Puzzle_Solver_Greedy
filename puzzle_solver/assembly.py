@@ -324,6 +324,11 @@ def cloneSegmentListWithMapping(segment_list, include_piece_mapping=False):
         )
         cloned_segment.best_connection_found_so_far = BestConnection()
         cloned_segment._kruskal_component_data = None
+        cloned_segment.enforce_frame_bounds = getattr(
+            segment,
+            "enforce_frame_bounds",
+            True,
+        )
         cloned_segments.append(cloned_segment)
     if include_piece_mapping:
         return cloned_segments, segment_mapping, piece_mapping

@@ -119,6 +119,24 @@ def buildArgumentParser():
         help="Favor joins with more touching edges when scoring component merges.",
     )
     parser.add_argument(
+        "--relax-frame-bounds",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Allow Kruskal assembly to build an oversized collision-free tree "
+            "before trimming to the final frame."
+        ),
+    )
+    parser.add_argument(
+        "--endgame-search",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Try relaxed boundary-to-boundary joins among the last few "
+            "components before trim/fill."
+        ),
+    )
+    parser.add_argument(
         "--beam-width",
         type=int,
         default=1,
@@ -150,6 +168,42 @@ def buildArgumentParser():
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Try to place leftover assembled components as units before filling individual pieces.",
+    )
+    parser.add_argument(
+        "--trim-fill-conservative",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Use assembly edge confidence to choose the trim frame and skip "
+            "low-confidence hole fills."
+        ),
+    )
+    parser.add_argument(
+        "--trim-fill-border",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Prefer trim frames that place weakly matched piece edges on the "
+            "outside border."
+        ),
+    )
+    parser.add_argument(
+        "--trim-fill-component-frame",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Search final-frame placements of leftover assembled components "
+            "before individual-piece filling."
+        ),
+    )
+    parser.add_argument(
+        "--trim-fill-edge-preserving",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Choose trim frames by retained assembled edges first and only "
+            "fill holes with at least two occupied neighbors."
+        ),
     )
     parser.add_argument(
         "--score-workers",

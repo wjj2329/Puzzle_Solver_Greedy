@@ -107,6 +107,13 @@ class DenseScoreTable:
             in self._values[own_number, direction_index, join_number, :component_count]
         )
 
+    def bestScoreForDirection(self, own_number, direction):
+        direction_index = DIRECTION_TO_INDEX[direction]
+        mask = self._filled[own_number, direction_index, :]
+        if not np.any(mask):
+            return float("inf")
+        return float(np.nanmin(self._values[own_number, direction_index, mask, 0]))
+
     def scalarScoreValues(self):
         if not self._all_scalar:
             return None

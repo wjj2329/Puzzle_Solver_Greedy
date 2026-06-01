@@ -37,6 +37,7 @@ from .paths import IMAGE_INPUT_DIR, IMAGE_OUTPUT_DIR, PROJECT_DIR
 from .postprocess import (
     adjacentPieces,
     componentSize,
+    connectEndgameComponents,
     fillHoles,
     fillScore,
     iterPieces,

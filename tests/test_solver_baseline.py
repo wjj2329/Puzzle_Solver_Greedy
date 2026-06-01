@@ -41,10 +41,16 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.connect_best_buddy_first)
         self.assertTrue(args.use_kruskal_priority_queue)
         self.assertTrue(args.trim_fill)
+        self.assertFalse(args.relax_frame_bounds)
+        self.assertFalse(args.endgame_search)
         self.assertEqual(1, args.beam_width)
         self.assertIsNone(args.beam_candidates)
         self.assertIsNone(args.beam_start_components)
         self.assertFalse(args.trim_fill_components)
+        self.assertFalse(args.trim_fill_conservative)
+        self.assertFalse(args.trim_fill_border)
+        self.assertFalse(args.trim_fill_component_frame)
+        self.assertFalse(args.trim_fill_edge_preserving)
         self.assertEqual("process", args.score_executor)
         self.assertEqual("dense", args.score_storage)
         self.assertIsNone(args.score_workers)
@@ -74,6 +80,8 @@ class CliTests(unittest.TestCase):
             "--no-kruskal-priority-queue",
             "--no-trim-fill",
             "--boost-big-piece-priority",
+            "--relax-frame-bounds",
+            "--endgame-search",
             "--score-workers",
             "4",
             "--score-executor",
@@ -90,6 +98,10 @@ class CliTests(unittest.TestCase):
             "reliability",
             "--compare-type",
             "compare-with-second",
+            "--trim-fill-conservative",
+            "--trim-fill-border",
+            "--trim-fill-component-frame",
+            "--trim-fill-edge-preserving",
             "--shuffle-seed",
             "123",
         ])
@@ -104,6 +116,8 @@ class CliTests(unittest.TestCase):
         self.assertFalse(args.use_kruskal_priority_queue)
         self.assertFalse(args.trim_fill)
         self.assertTrue(args.boost_big_piece_priority)
+        self.assertTrue(args.relax_frame_bounds)
+        self.assertTrue(args.endgame_search)
         self.assertEqual(4, args.score_workers)
         self.assertEqual("thread", args.score_executor)
         self.assertEqual("dict", args.score_storage)
@@ -118,6 +132,10 @@ class CliTests(unittest.TestCase):
             solver.CompareWithOtherSegments.COMPARE_WITH_SECOND,
             args.compare_type,
         )
+        self.assertTrue(args.trim_fill_conservative)
+        self.assertTrue(args.trim_fill_border)
+        self.assertTrue(args.trim_fill_component_frame)
+        self.assertTrue(args.trim_fill_edge_preserving)
         self.assertEqual(123, args.shuffle_seed)
 
     def test_solver_cli_parses_beam_options_for_kruskal(self):
@@ -1051,6 +1069,68 @@ class PostProcessTests(unittest.TestCase):
         self.assertIs(root.pic_connection_matrix[0, 0], first)
         self.assertIs(root.pic_connection_matrix[0, 1], second)
 
+    def test_trim_to_best_frame_can_prefer_border_like_edges(self):
+        score_dict = {}
+        border_piece = self.make_segment(1, score_dict)
+        other = self.make_segment(2, score_dict)
+        root = self.make_segment(3, score_dict)
+        root.pic_connection_matrix = np.asarray([[border_piece]], dtype=object)
+        root.binary_connection_matrix = np.asarray([[1]])
+        score_dict[
+            border_piece.piece_number,
+            solver.JoinDirection.UP,
+            other.piece_number,
+        ] = 10
+        score_dict[
+            border_piece.piece_number,
+            solver.JoinDirection.DOWN,
+            other.piece_number,
+        ] = 1
+
+        solver.trimToBestFrame(root, border_tiebreak=True)
+
+        self.assertIs(root.pic_connection_matrix[0, 0], border_piece)
+
+    def test_edge_preserving_trim_prefers_connected_assembly_edges(self):
+        score_dict = {}
+        pieces = {
+            piece_number: self.make_segment(piece_number, score_dict, max_size=3)
+            for piece_number in range(1, 10)
+        }
+        root = self.make_segment(10, score_dict, max_size=3)
+        root.pic_connection_matrix = np.asarray(
+            [
+                [pieces[5], 0, pieces[6], 0, pieces[1], pieces[2]],
+                [0, pieces[7], 0, 0, pieces[3], pieces[4]],
+                [pieces[8], 0, pieces[9], 0, 0, 0],
+            ],
+            dtype=object,
+        )
+        root.binary_connection_matrix = (
+            root.pic_connection_matrix != 0).astype(int)
+
+        trimmed = solver.trimToBestFrame(root, edge_preserving=True)
+
+        self.assertEqual(
+            [5, 6, 7, 8, 9],
+            sorted(piece.piece_number for piece in trimmed),
+        )
+        self.assertEqual(
+            (
+                (0, 1, 2),
+                (0, 3, 4),
+                (0, 0, 0),
+            ),
+            self.connection_layout(root),
+        )
+
+    def test_segment_compatibility_rejects_components_larger_than_frame(self):
+        segment = self.make_segment(1, {})
+
+        self.assertTrue(segment.checkCompatibility(np.ones((2, 2)), 2, 2))
+        self.assertFalse(segment.checkCompatibility(np.ones((3, 1)), 2, 2))
+        self.assertFalse(segment.checkCompatibility(np.ones((1, 3)), 2, 2))
+
     def test_fill_holes_uses_best_candidate_against_occupied_neighbors(self):
         score_dict = {}
         left = self.make_segment(1, score_dict)
@@ -1072,6 +1152,173 @@ class PostProcessTests(unittest.TestCase):
 
         self.assertEqual(1, filled)
         self.assertIs(root.pic_connection_matrix[0, 1], best)
+
+    def test_fill_holes_can_require_multiple_neighbors(self):
+        score_dict = {}
+        left = self.make_segment(1, score_dict)
+        candidate = self.make_segment(2, score_dict)
+        root = self.make_segment(3, score_dict)
+        root.pic_connection_matrix = np.asarray(
+            [
+                [left, 0],
+                [0, 0],
+            ],
+            dtype=object,
+        )
+        root.binary_connection_matrix = (root.pic_connection_matrix != 0).astype(int)
+        score_dict[
+            left.piece_number,
+            solver.JoinDirection.RIGHT,
+            candidate.piece_number,
+        ] = 1
+
+        filled = solver.fillHoles(
+            root,
+            [candidate],
+            min_neighbor_count=2,
+        )
+
+        self.assertEqual(0, filled)
+        self.assertEqual(0, root.pic_connection_matrix[0, 1])
+
+    def test_conservative_fill_skips_low_confidence_candidate(self):
+        score_dict = {}
+        left = self.make_segment(1, score_dict)
+        right = self.make_segment(2, score_dict)
+        candidate = self.make_segment(3, score_dict)
+        root = self.make_segment(4, score_dict)
+        root.pic_connection_matrix = np.asarray(
+            [
+                [left, right],
+                [0, 0],
+            ],
+            dtype=object,
+        )
+        root.binary_connection_matrix = (root.pic_connection_matrix != 0).astype(int)
+        leftover = candidate
+        leftover.pic_connection_matrix = np.asarray([[candidate]], dtype=object)
+        leftover.binary_connection_matrix = np.asarray([[1]])
+        score_dict[left.piece_number, solver.JoinDirection.RIGHT, right.piece_number] = 1
+        score_dict[left.piece_number, solver.JoinDirection.DOWN, candidate.piece_number] = 5
+        score_dict[right.piece_number, solver.JoinDirection.DOWN, candidate.piece_number] = 5
+        segments = [root, leftover]
+
+        solver.trimAndFillAssembly(
+            segments,
+            show_progress=False,
+            conservative_fill=True,
+        )
+
+        self.assertEqual([root], segments)
+        self.assertEqual(0, root.pic_connection_matrix[1, 0])
+        self.assertEqual(0, root.pic_connection_matrix[1, 1])
+
+    def test_component_frame_search_places_chunks_as_units(self):
+        score_dict = {}
+        top_left = self.make_segment(1, score_dict)
+        top_right = self.make_segment(2, score_dict)
+        bottom_left = self.make_segment(3, score_dict)
+        bottom_right = self.make_segment(4, score_dict)
+        top = top_left
+        bottom = bottom_left
+        top.pic_connection_matrix = np.asarray(
+            [[top_left, top_right]],
+            dtype=object,
+        )
+        top.binary_connection_matrix = np.asarray([[1, 1]])
+        bottom.pic_connection_matrix = np.asarray(
+            [[bottom_left, bottom_right]],
+            dtype=object,
+        )
+        bottom.binary_connection_matrix = np.asarray([[1, 1]])
+        score_dict[
+            top_left.piece_number,
+            solver.JoinDirection.DOWN,
+            bottom_left.piece_number,
+        ] = 1
+        score_dict[
+            top_right.piece_number,
+            solver.JoinDirection.DOWN,
+            bottom_right.piece_number,
+        ] = 1
+        segments = [bottom, top]
+
+        solver.trimAndFillAssembly(
+            segments,
+            show_progress=False,
+            component_frame_search=True,
+        )
+
+        self.assertEqual([top], segments)
+        self.assertEqual(
+            (
+                (1, 2),
+                (3, 4),
+            ),
+            self.connection_layout(top),
+        )
+
+    def test_edge_preserving_trim_fill_rolls_back_when_edges_are_lost(self):
+        score_dict = {}
+        first = self.make_segment(1, score_dict)
+        second = self.make_segment(2, score_dict)
+        third = self.make_segment(3, score_dict)
+        root = self.make_segment(4, score_dict)
+        root.pic_connection_matrix = np.asarray(
+            [[first, second, third]],
+            dtype=object,
+        )
+        root.binary_connection_matrix = (root.pic_connection_matrix != 0).astype(int)
+        segments = [root]
+
+        solver.trimAndFillAssembly(
+            segments,
+            show_progress=False,
+            edge_preserving=True,
+        )
+
+        self.assertEqual([root], segments)
+        self.assertEqual(
+            ((1, 2, 3),),
+            self.connection_layout(root),
+        )
+
+    def test_endgame_search_relaxes_final_component_join(self):
+        score_dict = defaultdict(lambda: math.inf)
+        first = self.make_segment(1, score_dict)
+        second = self.make_segment(2, score_dict)
+        third = self.make_segment(3, score_dict)
+        fourth = self.make_segment(4, score_dict)
+        left = first
+        right = third
+        left.pic_connection_matrix = np.asarray(
+            [[first, second]],
+            dtype=object,
+        )
+        left.binary_connection_matrix = np.asarray([[1, 1]])
+        right.pic_connection_matrix = np.asarray(
+            [[third, fourth]],
+            dtype=object,
+        )
+        right.binary_connection_matrix = np.asarray([[1, 1]])
+        score_dict[
+            second.piece_number,
+            solver.JoinDirection.RIGHT,
+            third.piece_number,
+        ] = 1
+        segments = [left, right]
+
+        merged = solver.connectEndgameComponents(
+            segments,
+            show_progress=False,
+        )
+
+        self.assertEqual(1, merged)
+        self.assertEqual([left], segments)
+        self.assertEqual(
+            ((1, 2, 3, 4),),
+            self.connection_layout(left),
+        )
 
     def test_fill_holes_matches_legacy_bruteforce_choices(self):
         score_dict = defaultdict(lambda: 100.0)
@@ -1459,6 +1706,64 @@ class ConnectionTests(unittest.TestCase):
             piece_numbers(dict_connection.pic_connection_matrix),
             piece_numbers(dense_connection.pic_connection_matrix),
         )
+
+    def test_relaxed_frame_bounds_allow_oversized_kruskal_tree(self):
+        score_dict = defaultdict(lambda: math.inf)
+        connections_dict = {}
+        first = solver.Segment(
+            np.zeros((2, 2, 3)),
+            max_width=2,
+            max_height=2,
+            piece_number=1,
+            component_id=1,
+            score_dict=score_dict,
+            connections_dict=connections_dict,
+        )
+        second = solver.Segment(
+            np.ones((2, 2, 3)),
+            max_width=2,
+            max_height=2,
+            piece_number=2,
+            component_id=2,
+            score_dict=score_dict,
+            connections_dict=connections_dict,
+        )
+        third = solver.Segment(
+            np.full((2, 2, 3), 2),
+            max_width=2,
+            max_height=2,
+            piece_number=3,
+            component_id=3,
+            score_dict=score_dict,
+            connections_dict=connections_dict,
+        )
+        first.pic_connection_matrix = np.asarray([[first, second]], dtype=object)
+        first.binary_connection_matrix = np.asarray([[1, 1]])
+        score_dict[
+            second.piece_number,
+            solver.JoinDirection.RIGHT,
+            third.piece_number,
+        ] = 1.0
+
+        first.best_connection_found_so_far = solver.BestConnection()
+        bounded = first.calculateConnectionsKruskal(
+            third,
+            boost_priority_of_big_pieces_joining=False,
+        )
+
+        self.assertFalse(bounded.hasConnection())
+
+        first.best_connection_found_so_far = solver.BestConnection()
+        first.enforce_frame_bounds = False
+        relaxed = first.calculateConnectionsKruskal(
+            third,
+            boost_priority_of_big_pieces_joining=False,
+        )
+
+        self.assertTrue(relaxed.hasConnection())
+        relaxed.stripZeros()
+        self.assertEqual((1, 3), relaxed.pic_connection_matrix.shape)
+        self.assertIs(relaxed.pic_connection_matrix[0, 2], third)
 
     def test_best_connection_strips_empty_rows_and_columns(self):
         connection = solver.BestConnection(
@@ -1866,16 +2171,22 @@ class KruskalAssemblyTests(unittest.TestCase):
             on_join=record_beam_join,
         )
 
-        self.assertEqual(8, beam_rounds)
-        self.assertEqual(1, len(beam_segments))
+        self.assertEqual(7, beam_rounds)
+        self.assertEqual(2, len(beam_segments))
         self.assertEqual(
-            (
-                (8, 0, 0, 0),
-                (1, 4, 9, 5),
-                (0, 7, 2, 6),
-                (0, 0, 0, 3),
-            ),
-            self.segment_layout(beam_segments[0]),
+            [
+                (
+                    (8, 0, 0),
+                    (1, 4, 0),
+                    (0, 7, 2),
+                ),
+                (
+                    (9, 5),
+                    (0, 6),
+                    (0, 3),
+                ),
+            ],
+            [self.segment_layout(segment) for segment in beam_segments],
         )
         self.assertEqual(
             [
@@ -1886,7 +2197,6 @@ class KruskalAssemblyTests(unittest.TestCase):
                 (4, 495.17246608796245, 3, 5),
                 (5, 503.5998927582074, 1, 2),
                 (6, 532.1237246410635, 3, 9),
-                (7, 644.3093314857682, 1, 3),
             ],
             beam_history,
         )

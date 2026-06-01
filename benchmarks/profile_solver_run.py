@@ -166,6 +166,9 @@ def run_profile(args):
             output_dir=output_dir,
             score_storage=args.score_storage,
         )
+    if args.relax_frame_bounds:
+        for segment in segments:
+            segment.enforce_frame_bounds = False
     original_size = len(segments)
     segment_save_batch = None
     if args.save_segments:
@@ -308,12 +311,24 @@ def run_profile(args):
         timer.timings["assembly_overhead"] = assembly_overhead
 
     assembly_remaining = len(segments)
+    endgame_merges = 0
+    if args.endgame_search:
+        with timer.time("endgame_search"):
+            with quiet_stdout(args.show_progress):
+                endgame_merges = Solver.connectEndgameComponents(
+                    segments,
+                    show_progress=args.show_progress,
+                )
     if args.trim_fill:
         with timer.time("trim_fill"):
             Solver.trimAndFillAssembly(
                 segments,
                 show_progress=args.show_progress,
                 preserve_components=args.trim_fill_components,
+                conservative_fill=args.trim_fill_conservative,
+                border_tiebreak=args.trim_fill_border,
+                component_frame_search=args.trim_fill_component_frame,
+                edge_preserving=args.trim_fill_edge_preserving,
             )
 
     total_elapsed = time.perf_counter() - total_started
@@ -323,6 +338,7 @@ def run_profile(args):
     print(f"pieces: {original_size}")
     print(f"after_best_buddy: {after_best_buddy}")
     print(f"assembly_remaining: {assembly_remaining}")
+    print(f"endgame_merges: {endgame_merges}")
     print(f"remaining: {len(segments)}")
     print(f"rounds: {rounds}")
     print(f"color_type: {color_type.name.lower()}")
@@ -335,6 +351,8 @@ def run_profile(args):
         f"workers={format_workers(score_workers)}"
     )
     print(f"assembly_strategy: {args.assembly_strategy}")
+    print(f"relax_frame_bounds: {args.relax_frame_bounds}")
+    print(f"endgame_search: {args.endgame_search}")
     if args.assembly_strategy == "beam":
         print(f"beam_width: {args.beam_width}")
         print(f"beam_candidates: {args.beam_candidates or args.beam_width}")
@@ -344,6 +362,10 @@ def run_profile(args):
     print(f"save_segments: {args.save_segments}")
     print(f"save_assembly: {args.save_assembly}")
     print(f"trim_fill_components: {args.trim_fill_components}")
+    print(f"trim_fill_conservative: {args.trim_fill_conservative}")
+    print(f"trim_fill_border: {args.trim_fill_border}")
+    print(f"trim_fill_component_frame: {args.trim_fill_component_frame}")
+    print(f"trim_fill_edge_preserving: {args.trim_fill_edge_preserving}")
     print(f"total: {total_elapsed:.3f}s")
     print_timings(timer.timings, total_elapsed)
 
@@ -422,6 +444,22 @@ def main():
         help="Enable the existing big-piece priority score adjustment.",
     )
     parser.add_argument(
+        "--relax-frame-bounds",
+        action="store_true",
+        help=(
+            "Allow Kruskal assembly to build an oversized collision-free tree "
+            "before trim/fill."
+        ),
+    )
+    parser.add_argument(
+        "--endgame-search",
+        action="store_true",
+        help=(
+            "Try relaxed boundary-to-boundary joins among the last few "
+            "components before trim/fill."
+        ),
+    )
+    parser.add_argument(
         "--save-segments",
         action="store_true",
         help="Write individual tile images while profiling.",
@@ -440,6 +478,38 @@ def main():
         "--trim-fill-components",
         action="store_true",
         help="Place leftover components as units before individual hole filling.",
+    )
+    parser.add_argument(
+        "--trim-fill-conservative",
+        action="store_true",
+        help=(
+            "Use assembly edge confidence to choose the trim frame and skip "
+            "low-confidence hole fills."
+        ),
+    )
+    parser.add_argument(
+        "--trim-fill-border",
+        action="store_true",
+        help=(
+            "Prefer trim frames that place weakly matched piece edges on the "
+            "outside border."
+        ),
+    )
+    parser.add_argument(
+        "--trim-fill-component-frame",
+        action="store_true",
+        help=(
+            "Search final-frame placements of leftover assembled components "
+            "before individual-piece filling."
+        ),
+    )
+    parser.add_argument(
+        "--trim-fill-edge-preserving",
+        action="store_true",
+        help=(
+            "Choose trim frames by retained assembled edges first and only "
+            "fill holes with at least two occupied neighbors."
+        ),
     )
     parser.add_argument(
         "--output-dir",

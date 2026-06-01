@@ -129,6 +129,7 @@ class Segment:
         self._own_score_edges = None
         self._compare_score_edges = None
         self._kruskal_component_data = None
+        self.enforce_frame_bounds = True
 
     def __add__(self, other):
         if type(self) is Segment:
@@ -275,7 +276,9 @@ class Segment:
         smallesty1 = min(non_zero_values[0])
         biggestx1 = max(non_zero_values[1])
         biggesty1 = max(non_zero_values[0])
-        if biggestx1-smallestx1 > max_height or biggesty1-smallesty1 > max_width:
+        if biggestx1 - smallestx1 >= max_height:
+            return False
+        if biggesty1 - smallesty1 >= max_width:
             return False
         return True
 
@@ -411,7 +414,12 @@ class Segment:
             compare_segment,
             boost_priority_of_big_pieces_joining,
             defer_connection_matrices=False):
-        connection_cache_key = (self.component_id, compare_segment.component_id)
+        enforce_frame_bounds = getattr(self, "enforce_frame_bounds", True)
+        connection_cache_key = (
+            self.component_id,
+            compare_segment.component_id,
+            enforce_frame_bounds,
+        )
         cached_connection = self.connections_dict.get(connection_cache_key)
         if cached_connection is not None:
             if not defer_connection_matrices:
@@ -484,6 +492,7 @@ class Segment:
                 width_padded,
                 max_height,
                 max_width,
+                enforce_frame_bounds,
             )
             candidate_offsets_are_prefit = True
         else:
@@ -529,8 +538,11 @@ class Segment:
                     else shifted_max_col
                 )
                 if (
-                        max_col - min_col > max_height
-                        or max_row - min_row > max_width):
+                        enforce_frame_bounds
+                        and (
+                            max_col - min_col >= max_height
+                            or max_row - min_row >= max_width
+                        )):
                     continue
 
             if compare_is_single_piece:
@@ -672,7 +684,8 @@ class Segment:
             height_padded,
             width_padded,
             max_height,
-            max_width):
+            max_width,
+            enforce_frame_bounds=True):
         compare_row, compare_col = compare_data["positions"][0]
         cache = own_data.setdefault("single_compare_candidates_dense", {})
         cache_key = (
@@ -686,6 +699,7 @@ class Segment:
             width_padded,
             max_height,
             max_width,
+            enforce_frame_bounds,
         )
         candidates = cache.get(cache_key)
         if candidates is not None:
@@ -734,8 +748,11 @@ class Segment:
                 else shifted_max_col
             )
             if (
-                    max_col - min_col > max_height
-                    or max_row - min_row > max_width):
+                    enforce_frame_bounds
+                    and (
+                        max_col - min_col >= max_height
+                        or max_row - min_row >= max_width
+                    )):
                 continue
 
             adjacent_entries = []

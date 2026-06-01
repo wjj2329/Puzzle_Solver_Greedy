@@ -18,7 +18,7 @@ from .assembly import (
 from .cli import parseArguments
 from .enums import AssemblyType, ColorType
 from .image_io import saveImage
-from .postprocess import trimAndFillAssembly
+from .postprocess import connectEndgameComponents, trimAndFillAssembly
 from .scoring import calculateScores, finalizeScores
 from .tiling import breakUpImage, saveSegmentImagesAsync
 
@@ -45,6 +45,9 @@ def main(argv=None):
         output_dir=args.output_dir,
         score_storage=args.score_storage,
     )
+    if args.relax_frame_bounds:
+        for segment in segment_list:
+            segment.enforce_frame_bounds = False
     printTiming("Image preparation", phase_started, args.show_progress)
     segment_save_batch = None
     if args.save_segments:
@@ -215,6 +218,11 @@ def main(argv=None):
         round_number += 1
     printTiming("Assembly", assembly_started, args.show_progress)
 
+    if args.endgame_search:
+        phase_started = time.perf_counter()
+        connectEndgameComponents(segment_list, show_progress=args.show_progress)
+        printTiming("Endgame search", phase_started, args.show_progress)
+
     if args.trim_fill:
         phase_started = time.perf_counter()
         try:
@@ -222,6 +230,10 @@ def main(argv=None):
                 segment_list,
                 args.show_progress,
                 preserve_components=args.trim_fill_components,
+                conservative_fill=args.trim_fill_conservative,
+                border_tiebreak=args.trim_fill_border,
+                component_frame_search=args.trim_fill_component_frame,
+                edge_preserving=args.trim_fill_edge_preserving,
             )
         except KeyboardInterrupt:
             if args.show_progress:

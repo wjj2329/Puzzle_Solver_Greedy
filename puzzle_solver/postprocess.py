@@ -14,7 +14,18 @@ NEIGHBOR_DIRECTIONS = (
     (0, -1, JoinDirection.RIGHT),
     (0, 1, JoinDirection.LEFT),
 )
+BASE_TO_COMPONENT_DIRECTIONS = (
+    (-1, 0),
+    (1, 0),
+    (0, -1),
+    (0, 1),
+)
 FILL_PROGRESS_INTERVAL_SECONDS = 5.0
+CONSERVATIVE_FILL_SCORE_QUANTILE = 0.90
+CONSERVATIVE_FILL_SCORE_MULTIPLIER = 1.10
+EDGE_PRESERVING_MIN_RETAINED_RATIO = 0.98
+EDGE_PRESERVING_MAX_SCORE_MULTIPLIER = 1.10
+ENDGAME_MAX_FRAME_OVERFLOW = 96
 
 
 def componentSize(segment):
@@ -32,14 +43,239 @@ def iterPieces(segment):
         yield piece
 
 
-def trimToBestFrame(segment):
+def frameAdjacencyScoreStats(frame):
+    scores = []
+    adjacent_count = 0
+    height, width = frame.shape
+    for row in range(height):
+        for col in range(width):
+            piece = frame[row, col]
+            if piece == 0:
+                continue
+            if col + 1 < width and frame[row, col + 1] != 0:
+                adjacent_count += 1
+                score = piece.score_dict.get(
+                    (
+                        piece.piece_number,
+                        JoinDirection.RIGHT,
+                        frame[row, col + 1].piece_number,
+                    ),
+                    math.inf,
+                )
+                if not math.isinf(score):
+                    scores.append(float(score))
+            if row + 1 < height and frame[row + 1, col] != 0:
+                adjacent_count += 1
+                score = piece.score_dict.get(
+                    (
+                        piece.piece_number,
+                        JoinDirection.DOWN,
+                        frame[row + 1, col].piece_number,
+                    ),
+                    math.inf,
+                )
+                if not math.isinf(score):
+                    scores.append(float(score))
+    if not scores:
+        return adjacent_count, math.inf, 0
+    return adjacent_count, sum(scores) / len(scores), len(scores)
+
+
+def segmentListAdjacencyScoreStats(segment_list):
+    adjacent_count = 0
+    score_count = 0
+    total_score = 0.0
+    for segment in segment_list:
+        segment_adjacent_count, average_score, segment_score_count = (
+            frameAdjacencyScoreStats(segment.pic_connection_matrix)
+        )
+        adjacent_count += segment_adjacent_count
+        if segment_score_count == 0:
+            continue
+        score_count += segment_score_count
+        total_score += average_score * segment_score_count
+    if score_count == 0:
+        return adjacent_count, math.inf, 0
+    return adjacent_count, total_score / score_count, score_count
+
+
+def snapshotSegments(segment_list):
+    return (
+        list(segment_list),
+        [
+            (
+                segment,
+                np.array(segment.pic_connection_matrix, copy=True),
+                np.array(segment.binary_connection_matrix, copy=True),
+            )
+            for segment in segment_list
+        ],
+    )
+
+
+def restoreSegments(segment_list, snapshot):
+    original_segments, segment_states = snapshot
+    for segment, pic_matrix, binary_matrix in segment_states:
+        segment.pic_connection_matrix = pic_matrix
+        segment.binary_connection_matrix = binary_matrix
+    segment_list[:] = original_segments
+
+
+def shouldKeepOriginalAssembly(original_stats, final_stats):
+    original_adjacent_count, original_average_score, _original_score_count = (
+        original_stats
+    )
+    final_adjacent_count, final_average_score, _final_score_count = final_stats
+    if original_adjacent_count == 0:
+        return False
+    minimum_retained = (
+        original_adjacent_count * EDGE_PRESERVING_MIN_RETAINED_RATIO
+    )
+    if final_adjacent_count < minimum_retained:
+        return True
+    if (
+            final_adjacent_count <= original_adjacent_count
+            and not math.isinf(original_average_score)
+            and final_average_score
+            > original_average_score * EDGE_PRESERVING_MAX_SCORE_MULTIPLIER):
+        return True
+    return False
+
+
+def conservativeFillScoreLimit(frame):
+    scores = []
+    height, width = frame.shape
+    for row in range(height):
+        for col in range(width):
+            piece = frame[row, col]
+            if piece == 0:
+                continue
+            if col + 1 < width and frame[row, col + 1] != 0:
+                score = piece.score_dict.get(
+                    (
+                        piece.piece_number,
+                        JoinDirection.RIGHT,
+                        frame[row, col + 1].piece_number,
+                    ),
+                    math.inf,
+                )
+                if not math.isinf(score):
+                    scores.append(float(score))
+            if row + 1 < height and frame[row + 1, col] != 0:
+                score = piece.score_dict.get(
+                    (
+                        piece.piece_number,
+                        JoinDirection.DOWN,
+                        frame[row + 1, col].piece_number,
+                    ),
+                    math.inf,
+                )
+                if not math.isinf(score):
+                    scores.append(float(score))
+    if not scores:
+        return None
+    return (
+        float(np.quantile(scores, CONSERVATIVE_FILL_SCORE_QUANTILE))
+        * CONSERVATIVE_FILL_SCORE_MULTIPLIER
+    )
+
+
+def bestDirectionalScore(score_dict, piece_number, direction):
+    if hasattr(score_dict, "bestScoreForDirection"):
+        return score_dict.bestScoreForDirection(piece_number, direction)
+
+    best = math.inf
+    for own_number, score_direction, _join_number in score_dict:
+        if own_number != piece_number or score_direction != direction:
+            continue
+        score = score_dict[own_number, score_direction, _join_number]
+        if isinstance(score, tuple):
+            score = score[0]
+        if score < best:
+            best = score
+    return best
+
+
+def frameBorderScore(frame):
+    total = 0.0
+    count = 0
+    height, width = frame.shape
+    for row in range(height):
+        for col in range(width):
+            piece = frame[row, col]
+            if piece == 0:
+                continue
+            directions = []
+            if row == 0:
+                directions.append(JoinDirection.UP)
+            if row == height - 1:
+                directions.append(JoinDirection.DOWN)
+            if col == 0:
+                directions.append(JoinDirection.LEFT)
+            if col == width - 1:
+                directions.append(JoinDirection.RIGHT)
+            for direction in directions:
+                score = bestDirectionalScore(
+                    piece.score_dict,
+                    piece.piece_number,
+                    direction,
+                )
+                if math.isinf(score):
+                    continue
+                total += score
+                count += 1
+    return total, count
+
+
+def trimToBestFrame(
+        segment,
+        score_tiebreak=False,
+        border_tiebreak=False,
+        edge_preserving=False):
     best_frame = None
     best_trimmed = None
     best_key = None
     for row_start, col_start in trimFrameStarts(segment):
         frame, trimmed = trimFrame(segment, row_start, col_start)
         occupied = int(np.count_nonzero(frame))
-        key = (occupied, -len(trimmed), -abs(row_start), -abs(col_start))
+        if edge_preserving:
+            adjacent_count, average_score, score_count = frameAdjacencyScoreStats(
+                frame,
+            )
+            border_score, border_count = (
+                frameBorderScore(frame) if border_tiebreak else (0.0, 0)
+            )
+            key = (
+                adjacent_count,
+                score_count,
+                -average_score,
+                occupied,
+                border_score,
+                border_count,
+                -len(trimmed),
+                -abs(row_start),
+                -abs(col_start),
+            )
+        elif score_tiebreak or border_tiebreak:
+            adjacent_count, average_score, score_count = frameAdjacencyScoreStats(
+                frame,
+            )
+            border_score, border_count = (
+                frameBorderScore(frame) if border_tiebreak else (0.0, 0)
+            )
+            key = (
+                occupied,
+                border_score,
+                border_count,
+                adjacent_count,
+                score_count,
+                -average_score,
+                -len(trimmed),
+                -abs(row_start),
+                -abs(col_start),
+            )
+        else:
+            key = (occupied, -len(trimmed), -abs(row_start), -abs(col_start))
         if best_key is None or key > best_key:
             best_key = key
             best_frame = frame
@@ -168,7 +404,9 @@ def fillHoles(
         segment,
         candidates,
         show_progress=False,
-        progress_interval=FILL_PROGRESS_INTERVAL_SECONDS):
+        progress_interval=FILL_PROGRESS_INTERVAL_SECONDS,
+        max_score=None,
+        min_neighbor_count=1):
     frame = segment.pic_connection_matrix
     remaining = {
         candidate.piece_number: candidate
@@ -203,6 +441,11 @@ def fillHoles(
             if frame[row, col] != 0:
                 continue
             if hole_versions.get((row, col)) != version:
+                continue
+            neighbor_count = -_neighbor_count
+            if neighbor_count < min_neighbor_count:
+                continue
+            if max_score is not None and item[1] > max_score:
                 continue
             best = item
             break
@@ -336,6 +579,259 @@ def placeComponent(frame, component, row_offset, col_offset):
     return displaced
 
 
+def occupiedPiecePositions(matrix):
+    for row, col in zip(*np.where(matrix != 0)):
+        yield int(row), int(col), matrix[row, col]
+
+
+def boundaryPiecePositions(matrix):
+    height, width = matrix.shape
+    for row, col, _piece in occupiedPiecePositions(matrix):
+        for row_delta, col_delta, _direction in NEIGHBOR_DIRECTIONS:
+            neighbor_row = row + row_delta
+            neighbor_col = col + col_delta
+            if not (0 <= neighbor_row < height and 0 <= neighbor_col < width):
+                yield row, col
+                break
+            if matrix[neighbor_row, neighbor_col] == 0:
+                yield row, col
+                break
+
+
+def endgameSegmentData(segment):
+    positions = tuple(occupiedPiecePositions(segment.pic_connection_matrix))
+    rows = [row for row, _col, _piece in positions]
+    cols = [col for _row, col, _piece in positions]
+    return {
+        "segment": segment,
+        "positions": positions,
+        "boundary": tuple(boundaryPiecePositions(segment.pic_connection_matrix)),
+        "lookup": {
+            (row, col): piece
+            for row, col, piece in positions
+        },
+        "stats": frameAdjacencyScoreStats(segment.pic_connection_matrix),
+        "min_row": min(rows),
+        "max_row": max(rows),
+        "min_col": min(cols),
+        "max_col": max(cols),
+    }
+
+
+def componentBoundaryOffsetsForData(base_data, component_data):
+    offsets = set()
+    for base_row, base_col in base_data["boundary"]:
+        for component_row, component_col in component_data["boundary"]:
+            for row_delta, col_delta in BASE_TO_COMPONENT_DIRECTIONS:
+                offsets.add((
+                    base_row + row_delta - component_row,
+                    base_col + col_delta - component_col,
+                ))
+    return offsets
+
+
+def componentBoundaryOffsets(base, component):
+    return componentBoundaryOffsetsForData(
+        endgameSegmentData(base),
+        endgameSegmentData(component),
+    )
+
+
+def componentPlacementScoreAgainstMap(base_lookup, component, row_offset, col_offset):
+    score_dict = component.score_dict
+    total = 0.0
+    count = 0
+    for row, col, piece in occupiedPiecePositions(component.pic_connection_matrix):
+        frame_row = row + row_offset
+        frame_col = col + col_offset
+        for row_delta, col_delta, direction in NEIGHBOR_DIRECTIONS:
+            neighbor = base_lookup.get((
+                frame_row + row_delta,
+                frame_col + col_delta,
+            ))
+            if neighbor is None:
+                continue
+            score = score_dict.get(
+                (neighbor.piece_number, direction, piece.piece_number),
+                math.inf,
+            )
+            if math.isinf(score):
+                return math.inf, count, total
+            total += score
+            count += 1
+    if count == 0:
+        return math.inf, count, total
+    return total / count, count, total
+
+
+def endgameBoundingBox(base_positions, component_positions, row_offset, col_offset):
+    rows = [row for row, _col, _piece in base_positions]
+    cols = [col for _row, col, _piece in base_positions]
+    rows.extend(row + row_offset for row, _col, _piece in component_positions)
+    cols.extend(col + col_offset for _row, col, _piece in component_positions)
+    min_row = min(rows)
+    max_row = max(rows)
+    min_col = min(cols)
+    max_col = max(cols)
+    return min_row, max_row, min_col, max_col
+
+
+def endgameBoundingBoxForData(base_data, component_data, row_offset, col_offset):
+    min_row = min(base_data["min_row"], component_data["min_row"] + row_offset)
+    max_row = max(base_data["max_row"], component_data["max_row"] + row_offset)
+    min_col = min(base_data["min_col"], component_data["min_col"] + col_offset)
+    max_col = max(base_data["max_col"], component_data["max_col"] + col_offset)
+    return min_row, max_row, min_col, max_col
+
+
+def endgameMergeScore(base_data, component_data, row_offset, col_offset):
+    base = base_data["segment"]
+    component = component_data["segment"]
+    base_positions = base_data["positions"]
+    component_positions = component_data["positions"]
+    base_lookup = base_data["lookup"]
+    min_row, max_row, min_col, max_col = endgameBoundingBoxForData(
+        base_data,
+        component_data,
+        row_offset,
+        col_offset,
+    )
+    height = max_row - min_row + 1
+    width = max_col - min_col + 1
+    overflow = (
+        max(0, height - base.max_height)
+        + max(0, width - base.max_width)
+    )
+    if overflow > ENDGAME_MAX_FRAME_OVERFLOW:
+        return None
+
+    for row, col, _piece in component_positions:
+        if (row + row_offset, col + col_offset) in base_lookup:
+            return None
+
+    cross_average, cross_count, cross_total = componentPlacementScoreAgainstMap(
+        base_lookup,
+        component,
+        row_offset,
+        col_offset,
+    )
+    if math.isinf(cross_average) or cross_count == 0:
+        return None
+
+    area = height * width
+    base_adjacent, base_average, base_score_count = base_data["stats"]
+    component_adjacent, component_average, component_score_count = (
+        component_data["stats"]
+    )
+    combined_score_count = cross_count
+    combined_total = cross_total
+    if base_score_count:
+        combined_score_count += base_score_count
+        combined_total += base_average * base_score_count
+    if component_score_count:
+        combined_score_count += component_score_count
+        combined_total += component_average * component_score_count
+    if combined_score_count == 0:
+        combined_average = math.inf
+    else:
+        combined_average = combined_total / combined_score_count
+    combined_adjacent = base_adjacent + component_adjacent + cross_count
+    return (
+        cross_count,
+        -overflow,
+        -cross_average,
+        combined_adjacent,
+        combined_score_count,
+        -combined_average,
+        -area,
+        -abs(row_offset),
+        -abs(col_offset),
+    )
+
+
+def mergeComponentIntoBase(base, component, row_offset, col_offset):
+    base_positions = tuple(occupiedPiecePositions(base.pic_connection_matrix))
+    component_positions = tuple(occupiedPiecePositions(component.pic_connection_matrix))
+    min_row, max_row, min_col, max_col = endgameBoundingBox(
+        base_positions,
+        component_positions,
+        row_offset,
+        col_offset,
+    )
+    frame = np.zeros(
+        (max_row - min_row + 1, max_col - min_col + 1),
+        dtype=object,
+    )
+    for row, col, piece in base_positions:
+        frame[row - min_row, col - min_col] = piece
+    for row, col, piece in component_positions:
+        frame[
+            row + row_offset - min_row,
+            col + col_offset - min_col,
+        ] = piece
+    base.pic_connection_matrix = frame
+    base.binary_connection_matrix = (frame != 0).astype(int)
+    base._kruskal_component_data = None
+
+
+def findBestEndgameMerge(segment_list):
+    data_by_segment = {
+        segment: endgameSegmentData(segment)
+        for segment in segment_list
+    }
+    best = None
+    for base in segment_list:
+        base_data = data_by_segment[base]
+        for component in segment_list:
+            if component is base:
+                continue
+            component_data = data_by_segment[component]
+            for row_offset, col_offset in componentBoundaryOffsetsForData(
+                    base_data,
+                    component_data,
+            ):
+                score = endgameMergeScore(
+                    base_data,
+                    component_data,
+                    row_offset,
+                    col_offset,
+                )
+                if score is None:
+                    continue
+                key = (
+                    score,
+                    -componentSize(base),
+                    -componentSize(component),
+                    -base.piece_number,
+                    -component.piece_number,
+                )
+                if best is None or key > best[0]:
+                    best = (key, base, component, row_offset, col_offset)
+    return best
+
+
+def connectEndgameComponents(segment_list, show_progress=True, max_components=4):
+    if len(segment_list) <= 1 or len(segment_list) > max_components:
+        return 0
+
+    merged = 0
+    while len(segment_list) > 1:
+        best = findBestEndgameMerge(segment_list)
+        if best is None:
+            break
+        _key, base, component, row_offset, col_offset = best
+        mergeComponentIntoBase(base, component, row_offset, col_offset)
+        segment_list.remove(component)
+        merged += 1
+
+    if show_progress:
+        print(
+            f"Endgame search: merged {merged} leftover components",
+            flush=True,
+        )
+    return merged
+
+
 def placeComponentsInFrame(frame, components, allow_overlap=False):
     unplaced = list(components)
     placed = 0
@@ -431,7 +927,155 @@ def placeComponents(segment, components):
     return placed, unplaced, displaced_pieces
 
 
-def trimToBestFrameWithComponents(segment, components):
+def stripEmptyBorder(segment):
+    frame = segment.pic_connection_matrix
+    if not np.any(frame != 0):
+        return
+    frame = frame[~np.all(frame == 0, axis=1)]
+    frame = frame[:, ~np.all(frame == 0, axis=0)]
+    segment.pic_connection_matrix = frame
+    segment.binary_connection_matrix = (frame != 0).astype(int)
+
+
+def placeComponentsInExpandedFrame(segment, components):
+    if not components:
+        return 0, [], []
+
+    frame = segment.pic_connection_matrix
+    max_component_height = max(
+        component.pic_connection_matrix.shape[0]
+        for component in components
+    )
+    max_component_width = max(
+        component.pic_connection_matrix.shape[1]
+        for component in components
+    )
+    height, width = frame.shape
+    expanded = np.zeros(
+        (
+            height + 2 * max_component_height,
+            width + 2 * max_component_width,
+        ),
+        dtype=object,
+    )
+    expanded[
+        max_component_height:max_component_height + height,
+        max_component_width:max_component_width + width,
+    ] = frame
+    (
+        placed,
+        _placed_pieces,
+        unplaced,
+        displaced_pieces,
+        _neighbor_count,
+        _score,
+    ) = placeComponentsInFrame(expanded, components)
+    segment.pic_connection_matrix = expanded
+    stripEmptyBorder(segment)
+    return placed, unplaced, displaced_pieces
+
+
+def averageScore(total_score, count):
+    if count == 0:
+        return math.inf
+    return total_score / count
+
+
+def placeComponentsInBestFrame(
+        segment_list,
+        border_tiebreak=False,
+        edge_preserving=False):
+    best = None
+    for root_index, root in enumerate(segment_list):
+        components = [
+            component
+            for index, component in enumerate(segment_list)
+            if index != root_index
+        ]
+        for row_start, col_start in trimFrameStarts(root):
+            frame, trimmed = trimFrame(root, row_start, col_start)
+            (
+                placed,
+                placed_pieces,
+                unplaced,
+                displaced,
+                neighbor_count,
+                placement_score,
+            ) = placeComponentsInFrame(frame, components)
+            occupied = int(np.count_nonzero(frame))
+            adjacency_count, adjacency_score, score_count = (
+                frameAdjacencyScoreStats(frame)
+            )
+            border_score, border_count = (
+                frameBorderScore(frame) if border_tiebreak else (0.0, 0)
+            )
+            root_preserved_pieces = componentSize(root) - len(trimmed)
+            if edge_preserving:
+                key = (
+                    adjacency_count,
+                    score_count,
+                    -adjacency_score,
+                    neighbor_count,
+                    -averageScore(placement_score, neighbor_count),
+                    placed,
+                    placed_pieces,
+                    root_preserved_pieces,
+                    -len(trimmed),
+                    -len(displaced),
+                    occupied,
+                    border_score,
+                    border_count,
+                    -componentSize(root),
+                    -abs(row_start),
+                    -abs(col_start),
+                    -root.piece_number,
+                )
+            else:
+                key = (
+                    placed,
+                    placed_pieces,
+                    root_preserved_pieces,
+                    -len(trimmed),
+                    -len(displaced),
+                    occupied,
+                    neighbor_count,
+                    -averageScore(placement_score, neighbor_count),
+                    adjacency_count,
+                    score_count,
+                    -adjacency_score,
+                    border_score,
+                    border_count,
+                    -componentSize(root),
+                    -abs(row_start),
+                    -abs(col_start),
+                    -root.piece_number,
+                )
+            if best is None or key > best[0]:
+                best = (
+                    key,
+                    root,
+                    frame,
+                    trimmed + displaced,
+                    placed,
+                    unplaced,
+                )
+
+    if best is None:
+        return None
+
+    _key, root, frame, trimmed_pieces, placed_components, unplaced = best
+    root.pic_connection_matrix = frame
+    root.binary_connection_matrix = (frame != 0).astype(int)
+    return root, trimmed_pieces, placed_components, unplaced
+
+
+def trimToBestFrameWithComponents(
+        segment,
+        components,
+        allow_component_overlap=True,
+        score_tiebreak=False,
+        border_tiebreak=False,
+        edge_preserving=False):
     best_frame = None
     best_trimmed = None
     best_unplaced = None
@@ -449,20 +1093,56 @@ def trimToBestFrameWithComponents(segment, components):
         ) = placeComponentsInFrame(
             frame,
             components,
-            allow_overlap=True,
+            allow_overlap=allow_component_overlap,
         )
         occupied = int(np.count_nonzero(frame))
-        key = (
-            occupied,
-            placed_pieces,
-            placed,
-            neighbor_count,
-            -score,
-            root_occupied,
-            -len(trimmed),
-            -abs(row_start),
-            -abs(col_start),
-        )
+        if score_tiebreak or border_tiebreak:
+            frame_neighbor_count, frame_score, frame_score_count = (
+                frameAdjacencyScoreStats(frame)
+            )
+            frame_border_score, frame_border_count = (
+                frameBorderScore(frame) if border_tiebreak else (0.0, 0)
+            )
+        else:
+            frame_neighbor_count = 0
+            frame_score = 0.0
+            frame_score_count = 0
+            frame_border_score = 0.0
+            frame_border_count = 0
+        if edge_preserving:
+            key = (
+                frame_neighbor_count,
+                frame_score_count,
+                -frame_score,
+                neighbor_count,
+                -score,
+                occupied,
+                placed_pieces,
+                placed,
+                root_occupied,
+                frame_border_score,
+                frame_border_count,
+                -len(trimmed),
+                -abs(row_start),
+                -abs(col_start),
+            )
+        else:
+            key = (
+                occupied,
+                placed_pieces,
+                placed,
+                frame_border_score,
+                frame_border_count,
+                frame_neighbor_count,
+                frame_score_count,
+                -frame_score,
+                neighbor_count,
+                -score,
+                root_occupied,
+                -len(trimmed),
+                -abs(row_start),
+                -abs(col_start),
+            )
         if best_key is None or key > best_key:
             best_key = key
             best_frame = frame
@@ -478,26 +1158,75 @@ def trimToBestFrameWithComponents(segment, components):
 def trimAndFillAssembly(
         segment_list,
         show_progress=True,
-        preserve_components=False):
+        preserve_components=False,
+        conservative_fill=False,
+        border_tiebreak=False,
+        component_frame_search=False,
+        edge_preserving=False):
     if not segment_list:
         return None
 
-    root = max(segment_list, key=componentSize)
-    leftover_components = []
-    for segment in segment_list:
-        if segment is root:
-            continue
-        leftover_components.append(segment)
-    if preserve_components:
-        trimmed_pieces, placed_components, leftover_components = (
-            trimToBestFrameWithComponents(
-                root,
-                leftover_components,
-            )
+    original_snapshot = None
+    original_stats = None
+    if edge_preserving:
+        original_snapshot = snapshotSegments(segment_list)
+        original_stats = segmentListAdjacencyScoreStats(segment_list)
+
+    placed_components = 0
+    trimmed_pieces = []
+    if component_frame_search and len(segment_list) > 1:
+        component_frame = placeComponentsInBestFrame(
+            segment_list,
+            border_tiebreak=border_tiebreak,
+            edge_preserving=edge_preserving,
         )
+        if component_frame is not None:
+            (
+                root,
+                trimmed_pieces,
+                placed_components,
+                leftover_components,
+            ) = component_frame
+        else:
+            root = max(segment_list, key=componentSize)
+            leftover_components = [
+                segment
+                for segment in segment_list
+                if segment is not root
+            ]
     else:
-        trimmed_pieces = trimToBestFrame(root)
-        placed_components = 0
+        root = max(segment_list, key=componentSize)
+        leftover_components = []
+        for segment in segment_list:
+            if segment is root:
+                continue
+            leftover_components.append(segment)
+        if preserve_components and conservative_fill and leftover_components:
+            pre_placed, leftover_components, displaced_pieces = (
+                placeComponentsInExpandedFrame(root, leftover_components)
+            )
+            placed_components += pre_placed
+            trimmed_pieces.extend(displaced_pieces)
+        if preserve_components:
+            frame_trimmed_pieces, frame_placed, leftover_components = (
+                trimToBestFrameWithComponents(
+                    root,
+                    leftover_components,
+                    allow_component_overlap=not conservative_fill,
+                    score_tiebreak=conservative_fill,
+                    border_tiebreak=border_tiebreak,
+                    edge_preserving=edge_preserving,
+                )
+            )
+            trimmed_pieces.extend(frame_trimmed_pieces)
+            placed_components += frame_placed
+        else:
+            trimmed_pieces = trimToBestFrame(
+                root,
+                score_tiebreak=conservative_fill,
+                border_tiebreak=border_tiebreak,
+                edge_preserving=edge_preserving,
+            )
     if preserve_components and leftover_components:
         additional_placed, leftover_components, displaced_pieces = placeComponents(
             root,
@@ -523,7 +1252,44 @@ def trimAndFillAssembly(
                 f"placed {placed_components} leftover components",
                 flush=True,
             )
-    filled = fillHoles(root, candidates, show_progress=show_progress)
+    fill_score_limit = None
+    if conservative_fill or edge_preserving:
+        fill_score_limit = conservativeFillScoreLimit(root.pic_connection_matrix)
+        if show_progress and fill_score_limit is not None:
+            print(
+                "Trim/fill post-process: "
+                f"conservative fill score limit {fill_score_limit:.6g}",
+                flush=True,
+            )
+    min_neighbor_count = 2 if edge_preserving else 1
+    filled = fillHoles(
+        root,
+        candidates,
+        show_progress=show_progress,
+        max_score=fill_score_limit,
+        min_neighbor_count=min_neighbor_count,
+    )
+
+    if edge_preserving:
+        final_stats = segmentListAdjacencyScoreStats([root])
+        if shouldKeepOriginalAssembly(original_stats, final_stats):
+            restoreSegments(segment_list, original_snapshot)
+            if show_progress:
+                print(
+                    "Trim/fill post-process: "
+                    "kept original assembly because trim/fill dropped too "
+                    "many retained edges",
+                    flush=True,
+                )
+            if len(segment_list) == 1:
+                original_root = segment_list[0]
+                return BestConnection(
+                    own_segment=original_root,
+                    pic_connection_matrix=original_root.pic_connection_matrix,
+                    binary_connection_matrix=original_root.binary_connection_matrix,
+                )
+            return None
+
     segment_list[:] = [root]
 
     if show_progress:
