@@ -100,6 +100,49 @@ def buildArgumentParser():
         help="Print score calculation, best-buddy, and assembly progress.",
     )
     parser.add_argument(
+        "--gallagher-mode",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Run the fixed-orientation Gallagher-style baseline: RGB, MGC, "
+            "second-best reliability, Kruskal forest assembly, no best-buddy, "
+            "and no trim/fill cleanup."
+        ),
+    )
+    parser.add_argument(
+        "--quality-report",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Print paper-style assembly quality metrics after solving.",
+    )
+    parser.add_argument(
+        "--rank-report",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Include true-neighbor top-1/top-2/top-5 score ranks in the quality report.",
+    )
+    parser.add_argument(
+        "--gallagher-pairwise-kruskal",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Use Gallagher-style pairwise edge-ordered Kruskal assembly "
+            "instead of rescoring whole component pairs."
+        ),
+    )
+    parser.add_argument(
+        "--gallagher-edge-candidates",
+        type=int,
+        default=10,
+        help="Top candidate pieces per piece side to queue for pairwise Gallagher Kruskal.",
+    )
+    parser.add_argument(
+        "--gallagher-mutual-edges",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Queue only reciprocal best edges in Gallagher pairwise Kruskal.",
+    )
+    parser.add_argument(
         "--best-buddy",
         dest="connect_best_buddy_first",
         action=argparse.BooleanOptionalAction,
@@ -117,6 +160,24 @@ def buildArgumentParser():
         "--boost-big-piece-priority",
         action="store_true",
         help="Favor joins with more touching edges when scoring component merges.",
+    )
+    parser.add_argument(
+        "--staged-kruskal",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Prefer component merges with at least two touching edges before "
+            "falling back to ordinary one-edge Kruskal joins."
+        ),
+    )
+    parser.add_argument(
+        "--staged-kruskal-score-limit",
+        type=float,
+        default=None,
+        help=(
+            "Maximum score allowed in the multi-contact stage. Omit to use "
+            "1.0 in reliability mode and no limit in dissimilarity mode."
+        ),
     )
     parser.add_argument(
         "--relax-frame-bounds",
@@ -252,6 +313,15 @@ def buildArgumentParser():
         help="Use raw dissimilarity costs or second-best reliability costs.",
     )
     parser.add_argument(
+        "--symmetric-compatibility",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Average reciprocal directed edge scores so each seam uses both "
+            "pieces' compatibility confidence."
+        ),
+    )
+    parser.add_argument(
         "--compare-type",
         type=enumValue(CompareWithOtherSegments),
         metavar=f"{{{enumNames(CompareWithOtherSegments)}}}",
@@ -267,12 +337,43 @@ def buildArgumentParser():
     return parser
 
 
+def applyGallagherMode(args):
+    if not args.gallagher_mode:
+        return args
+    args.color_type = ColorType.RGB
+    args.score_algorithm = ScoreAlgorithm.MGC_DISTANCE
+    args.score_mode = ScoreMode.RELIABILITY
+    args.symmetric_compatibility = True
+    args.gallagher_pairwise_kruskal = True
+    args.assembly_type = AssemblyType.KRUSKAL
+    args.compare_type = CompareWithOtherSegments.ONLY_BEST
+    args.connect_best_buddy_first = False
+    args.use_kruskal_priority_queue = True
+    args.boost_big_piece_priority = False
+    args.staged_kruskal = False
+    args.relax_frame_bounds = False
+    args.endgame_search = False
+    args.beam_width = 1
+    args.beam_candidates = None
+    args.beam_start_components = None
+    args.trim_fill = False
+    args.trim_fill_components = False
+    args.trim_fill_conservative = False
+    args.trim_fill_border = False
+    args.trim_fill_component_frame = False
+    args.trim_fill_edge_preserving = False
+    args.quality_report = True
+    return args
+
+
 def parseArguments(argv=None):
-    args = buildArgumentParser().parse_args(argv)
+    args = applyGallagherMode(buildArgumentParser().parse_args(argv))
     if args.piece_size <= 0:
         raise SystemExit("--piece-size must be greater than 0")
     if args.score_workers is not None and args.score_workers <= 0:
         raise SystemExit("--score-workers must be greater than 0")
+    if args.gallagher_edge_candidates <= 0:
+        raise SystemExit("--gallagher-edge-candidates must be greater than 0")
     if args.beam_width <= 0:
         raise SystemExit("--beam-width must be greater than 0")
     if args.beam_candidates is not None and args.beam_candidates <= 0:
@@ -281,6 +382,14 @@ def parseArguments(argv=None):
         raise SystemExit("--beam-start-components must be greater than 1")
     if args.beam_width > 1 and args.assembly_type != AssemblyType.KRUSKAL:
         raise SystemExit("--beam-width is only supported with Kruskal assembly")
+    if args.staged_kruskal and args.assembly_type != AssemblyType.KRUSKAL:
+        raise SystemExit("--staged-kruskal is only supported with Kruskal assembly")
+    if args.staged_kruskal and args.beam_width > 1:
+        raise SystemExit("--staged-kruskal cannot be combined with --beam-width greater than 1")
+    if (
+            args.staged_kruskal_score_limit is not None
+            and args.staged_kruskal_score_limit < 0):
+        raise SystemExit("--staged-kruskal-score-limit must be non-negative")
     if args.beam_start_components is not None and args.beam_width <= 1:
         raise SystemExit(
             "--beam-start-components requires --beam-width greater than 1")

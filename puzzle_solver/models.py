@@ -10,6 +10,7 @@ from .distances import (
     euclideanDistance,
     mahalanobisEdgeDistance,
     mgcEdgeDistance,
+    mgcEdgeMahalanobisDistance,
 )
 from .enums import CompareWithOtherSegments, JOIN_EDGE_PAIRS, JoinDirection
 from .score_helpers import reciprocalScoreEntries
@@ -73,14 +74,16 @@ class BestConnection:
         self.join_segment = join_segment
         self.binary_connection_matrix = binary_connection_matrix
         self.kruskal_connection_data = None
+        self.contact_count = 0
 
-    def setConnection(self, pic_connection_matrix, join_segment, score, own_segment, binary_connection_matrix):
+    def setConnection(self, pic_connection_matrix, join_segment, score, own_segment, binary_connection_matrix, contact_count=1):
         self.second_best_score = self.score
         self.pic_connection_matrix = pic_connection_matrix
         self.join_segment = join_segment
         self.score = score
         self.own_segment = own_segment
         self.binary_connection_matrix = binary_connection_matrix
+        self.contact_count = contact_count
 
     def isBetterConnection(self, other_connection, compare_type):
         if compare_type == CompareWithOtherSegments.ONLY_BEST:
@@ -245,6 +248,23 @@ class Segment:
             ],
         )
 
+    def scoreEntriesMGCDistance(self, segment):
+        own_edges = self.ownScoreEdges()
+        compare_edges = segment.compareScoreEdges()
+        return self.reciprocalScoreEntries(
+            segment,
+            [
+                (
+                    own_direction,
+                    mgcEdgeMahalanobisDistance(
+                        own_edges[own_direction],
+                        compare_edges[compare_direction],
+                    ),
+                )
+                for own_direction, compare_direction in JOIN_EDGE_PAIRS
+            ],
+        )
+
     def applyScoreEntries(self, entries):
         for key, score in entries:
             self.score_dict[key] = score
@@ -269,6 +289,9 @@ class Segment:
 
     def calculateScoreMGC(self, segment):
         self.applyScoreEntries(self.scoreEntriesMGC(segment))
+
+    def calculateScoreMGCDistance(self, segment):
+        self.applyScoreEntries(self.scoreEntriesMGCDistance(segment))
 
     def checkCompatibility(self, booleanarray, max_height, max_width):
         non_zero_values = nonzero(booleanarray)
@@ -657,6 +680,7 @@ class Segment:
                 best_connection_found_so_far.score = score
                 best_connection_found_so_far.own_segment = self
                 best_connection_found_so_far.join_segment = compare_segment
+                best_connection_found_so_far.contact_count = comparison_count
                 best_connection_offset = (x, y)
         if best_connection_offset is not None:
             x, y = best_connection_offset

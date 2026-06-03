@@ -9,6 +9,7 @@ from .distances import (
     mgcEdgeDistances,
 )
 from .enums import ScoreAlgorithm, ScoreMode
+from .enums import OPPOSITE_DIRECTIONS
 from .models import ScorePayload
 from .score_helpers import (
     JOIN_EDGE_PAIR_INDICES,
@@ -221,7 +222,7 @@ def scoreComponentsForDirection(
                 compare_edges["edge"][remaining_start:],
             ),
         )
-    if score_algorithm == ScoreAlgorithm.MGC:
+    if score_algorithm in (ScoreAlgorithm.MGC, ScoreAlgorithm.MGC_DISTANCE):
         return (
             mgcEdgeDistances(
                 own_edges["edge"][index],
@@ -230,6 +231,7 @@ def scoreComponentsForDirection(
                 compare_edges["edge"][remaining_start:],
                 compare_edges["gradient_average"][remaining_start:],
                 compare_edges["gradient_inverse_covariance"][remaining_start:],
+                sqrt=score_algorithm == ScoreAlgorithm.MGC_DISTANCE,
             ),
         )
     return ()
@@ -284,6 +286,8 @@ def scoreEntriesForPair(segment1, segment2, score_algorithm):
         return segment1.scoreEntriesEuclideanAndMahalanobis(segment2)
     elif score_algorithm == ScoreAlgorithm.MGC:
         return segment1.scoreEntriesMGC(segment2)
+    elif score_algorithm == ScoreAlgorithm.MGC_DISTANCE:
+        return segment1.scoreEntriesMGCDistance(segment2)
     return None
 
 
@@ -307,6 +311,8 @@ def calculateScoresSerial(segment_list, score_algorithm, show_progress=True):
                 segment1.calculateScoreEuclideanAndMahalanobis(segment2)
             elif score_algorithm == ScoreAlgorithm.MGC:
                 segment1.calculateScoreMGC(segment2)
+            elif score_algorithm == ScoreAlgorithm.MGC_DISTANCE:
+                segment1.calculateScoreMGCDistance(segment2)
 
 
 def precomputeScoreEdges(segment_list):
@@ -477,6 +483,33 @@ def reliabilityScore(score, second_best_score):
             return 1.0
         return float("inf")
     return score / second_best_score
+
+
+def applySymmetricCompatibilityScores(segment_list):
+    score_dict = scoreDict(segment_list)
+    if hasattr(score_dict, "applySymmetricCompatibilityScores"):
+        score_dict.applySymmetricCompatibilityScores()
+        return
+
+    updates = {}
+    for own_number, direction, join_number in list(score_dict):
+        reciprocal_key = (
+            join_number,
+            OPPOSITE_DIRECTIONS[direction],
+            own_number,
+        )
+        if reciprocal_key not in score_dict:
+            continue
+        key = (own_number, direction, join_number)
+        if key in updates:
+            continue
+        score = score_dict[key]
+        reciprocal_score = score_dict[reciprocal_key]
+        symmetric_score = (score + reciprocal_score) / 2.0
+        updates[key] = symmetric_score
+        updates[reciprocal_key] = symmetric_score
+    for key, score in updates.items():
+        score_dict[key] = score
 
 
 def normalizeScores(segment_list, score_algorithm):

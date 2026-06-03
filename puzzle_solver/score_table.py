@@ -1,6 +1,6 @@
 import numpy as np
 
-from .enums import JoinDirection
+from .enums import JoinDirection, OPPOSITE_DIRECTIONS
 
 
 DIRECTIONS_BY_INDEX = tuple(JoinDirection)
@@ -313,6 +313,49 @@ class DenseScoreTable:
                 )
                 score_values[own_number, direction_index, mask] = updated_scores
                 self._scalar[own_number, direction_index, mask] = True
+        self._all_scalar = True
+
+    def applySymmetricCompatibilityScores(self):
+        score_values = self._values[..., 0]
+        piece_indices = np.arange(1, self.piece_count + 1)
+        for direction_index, direction in enumerate(DIRECTIONS_BY_INDEX):
+            opposite_index = DIRECTION_TO_INDEX[OPPOSITE_DIRECTIONS[direction]]
+            values = score_values[
+                piece_indices[:, np.newaxis],
+                direction_index,
+                piece_indices[np.newaxis, :],
+            ]
+            reciprocal_values = score_values[
+                piece_indices[np.newaxis, :],
+                opposite_index,
+                piece_indices[:, np.newaxis],
+            ]
+            filled = self._filled[
+                piece_indices[:, np.newaxis],
+                direction_index,
+                piece_indices[np.newaxis, :],
+            ]
+            reciprocal_filled = self._filled[
+                piece_indices[np.newaxis, :],
+                opposite_index,
+                piece_indices[:, np.newaxis],
+            ]
+            mask = filled & reciprocal_filled
+            symmetric = (values + reciprocal_values) / 2.0
+            row_indices = piece_indices[:, np.newaxis]
+            col_indices = piece_indices[np.newaxis, :]
+            score_values[row_indices, direction_index, col_indices] = np.where(
+                mask,
+                symmetric,
+                values,
+            )
+            score_values[col_indices, opposite_index, row_indices] = np.where(
+                mask,
+                symmetric,
+                reciprocal_values,
+            )
+            self._scalar[row_indices, direction_index, col_indices] = True
+            self._scalar[col_indices, opposite_index, row_indices] = True
         self._all_scalar = True
 
     def _reliabilityScores(self, scores, second_best_score):

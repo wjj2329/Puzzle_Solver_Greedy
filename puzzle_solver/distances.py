@@ -70,7 +70,7 @@ def mahalanobisEdgeDistances(
     )
 
 
-def mgcDirectionalDistance(source_edge, target_edge):
+def mgcDirectionalDistance(source_edge, target_edge, sqrt=False):
     seam_gradient = target_edge.edge - source_edge.edge
     centered = seam_gradient - source_edge.gradient_average
     scores = np.einsum(
@@ -79,7 +79,10 @@ def mgcDirectionalDistance(source_edge, target_edge):
         source_edge.gradient_inverse_covariance,
         centered,
     )
-    return float(np.maximum(scores, 0.0).sum())
+    scores = np.maximum(scores, 0.0)
+    if sqrt:
+        scores = np.sqrt(scores)
+    return float(scores.sum())
 
 
 def mgcEdgeDistance(own_edge, compare_edge):
@@ -89,13 +92,21 @@ def mgcEdgeDistance(own_edge, compare_edge):
     )
 
 
+def mgcEdgeMahalanobisDistance(own_edge, compare_edge):
+    return (
+        mgcDirectionalDistance(own_edge, compare_edge, sqrt=True)
+        + mgcDirectionalDistance(compare_edge, own_edge, sqrt=True)
+    )
+
+
 def mgcEdgeDistances(
         edge,
         gradient_average,
         gradient_inverse_covariance,
         compare_edges,
         compare_gradient_averages,
-        compare_gradient_inverse_covariances):
+        compare_gradient_inverse_covariances,
+        sqrt=False):
     centered = compare_edges - edge[np.newaxis, :, :] - gradient_average
     scores = np.einsum(
         "mij,jk,mik->mi",
@@ -115,7 +126,9 @@ def mgcEdgeDistances(
         compare_gradient_inverse_covariances,
         centered2,
     )
-    return (
-        np.maximum(scores, 0.0).sum(axis=1)
-        + np.maximum(scores2, 0.0).sum(axis=1)
-    )
+    scores = np.maximum(scores, 0.0)
+    scores2 = np.maximum(scores2, 0.0)
+    if sqrt:
+        scores = np.sqrt(scores)
+        scores2 = np.sqrt(scores2)
+    return scores.sum(axis=1) + scores2.sum(axis=1)

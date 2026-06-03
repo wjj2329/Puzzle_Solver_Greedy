@@ -2,13 +2,16 @@ import random
 import time
 
 import imageio.v3 as iio
+import numpy as np
 from PIL import Image
 from skimage import color
 
 from .assembly import (
     KruskalConnectionPriorityQueue,
+    assembleGallagherPairwiseKruskal,
     assembleKruskalBeamSearch,
     assembleKruskalHybridBeamSearch,
+    assembleKruskalStaged,
     connectBestBudsFirst,
     findBestConnectionKruskal,
     findBestConnectionPrim,
@@ -16,16 +19,36 @@ from .assembly import (
     joinPieces,
 )
 from .cli import parseArguments
-from .enums import AssemblyType, ColorType
+from .enums import AssemblyType, ColorType, ScoreMode
+from .evaluation import formatPaperStyleReport, paperStyleReport
 from .image_io import saveImage
 from .postprocess import connectEndgameComponents, trimAndFillAssembly
-from .scoring import calculateScores, finalizeScores
+from .scoring import (
+    applySymmetricCompatibilityScores,
+    calculateScores,
+    finalizeScores,
+)
 from .tiling import breakUpImage, saveSegmentImagesAsync
 
 
 def printTiming(label, started_at, show_progress):
     if show_progress:
         print(f"{label} took: {time.perf_counter() - started_at:.3f} secs")
+
+
+def stagedKruskalScoreLimit(args):
+    if args.staged_kruskal_score_limit is not None:
+        return args.staged_kruskal_score_limit
+    if args.score_mode == ScoreMode.RELIABILITY:
+        return 1.0
+    return None
+
+
+def normalizeRgbForGallagher(image):
+    image = np.asarray(image, dtype=np.float64)
+    if image.size > 0 and image.max() > 1.0:
+        image = image / 255.0
+    return image
 
 
 def main(argv=None):
@@ -37,6 +60,13 @@ def main(argv=None):
     image = iio.imread(picture_file_name)
     if args.color_type == ColorType.LAB:
         image = color.rgb2lab(image)
+    elif args.gallagher_mode:
+        image = normalizeRgbForGallagher(image)
+    if args.gallagher_mode and args.show_progress:
+        print(
+            "Gallagher mode: RGB + MGC + reliability + Kruskal forest "
+            "assembly (fixed orientation)."
+        )
     segment_list = breakUpImage(
         image,
         length,
@@ -72,6 +102,8 @@ def main(argv=None):
 
         phase_started = time.perf_counter()
         finalizeScores(segment_list, args.score_algorithm, args.score_mode)
+        if args.symmetric_compatibility:
+            applySymmetricCompatibilityScores(segment_list)
         printTiming("Score finalization", phase_started, args.show_progress)
     finally:
         if segment_save_batch is not None:
@@ -106,7 +138,9 @@ def main(argv=None):
     if (
             args.assembly_type == AssemblyType.KRUSKAL
             and args.beam_width <= 1
-            and args.use_kruskal_priority_queue):
+            and args.use_kruskal_priority_queue
+            and not args.staged_kruskal
+            and not args.gallagher_pairwise_kruskal):
         phase_started = time.perf_counter()
         kruskal_queue = KruskalConnectionPriorityQueue(
             segment_list,
@@ -116,7 +150,35 @@ def main(argv=None):
         )
         printTiming("Kruskal queue build", phase_started, args.show_progress)
     assembly_started = time.perf_counter()
-    if args.assembly_type == AssemblyType.KRUSKAL and args.beam_width > 1:
+    if args.assembly_type == AssemblyType.KRUSKAL and args.gallagher_pairwise_kruskal:
+        def saveGallagherJoin(best_connection, join_round):
+            if not args.save_assembly:
+                return
+            image_name = saveImage(
+                best_connection,
+                length,
+                join_round,
+                args.color_type,
+                args.output_name,
+                output_dir=args.output_dir,
+            )
+            if args.show_animation:
+                updated_picture = ImageTk.PhotoImage(Image.open(image_name))
+                w.configure(image=updated_picture)
+                w.image = updated_picture
+                w.pack(side="bottom", fill="both", expand="no")
+                window.update()
+
+        round_number = assembleGallagherPairwiseKruskal(
+            segment_list,
+            original_size,
+            top_candidates_per_edge=args.gallagher_edge_candidates,
+            mutual_edges_only=args.gallagher_mutual_edges,
+            on_join=saveGallagherJoin if args.save_assembly else None,
+        )
+        if segment_list:
+            root = segment_list[0]
+    elif args.assembly_type == AssemblyType.KRUSKAL and args.beam_width > 1:
         def saveBeamJoin(best_connection, join_round):
             if not args.save_assembly:
                 return
@@ -162,9 +224,43 @@ def main(argv=None):
             )
         if segment_list:
             root = segment_list[0]
+    elif args.assembly_type == AssemblyType.KRUSKAL and args.staged_kruskal:
+        def saveStagedJoin(best_connection, join_round):
+            if not args.save_assembly:
+                return
+            image_name = saveImage(
+                best_connection,
+                length,
+                join_round,
+                args.color_type,
+                args.output_name,
+                output_dir=args.output_dir,
+            )
+            if args.show_animation:
+                updated_picture = ImageTk.PhotoImage(Image.open(image_name))
+                w.configure(image=updated_picture)
+                w.image = updated_picture
+                w.pack(side="bottom", fill="both", expand="no")
+                window.update()
+
+        round_number = assembleKruskalStaged(
+            segment_list,
+            original_size,
+            boost_priority_of_big_pieces_joining=args.boost_big_piece_priority,
+            compare_type=args.compare_type,
+            compare_mode=args.compare_type,
+            max_multi_contact_score=stagedKruskalScoreLimit(args),
+            on_join=saveStagedJoin if args.save_assembly else None,
+        )
+        if segment_list:
+            root = segment_list[0]
     while len(segment_list) > 1 and not (
             args.assembly_type == AssemblyType.KRUSKAL
-            and args.beam_width > 1):
+            and (
+                args.beam_width > 1
+                or args.staged_kruskal
+                or args.gallagher_pairwise_kruskal
+            )):
         best_connection = None
         if args.assembly_type == AssemblyType.KRUSKAL:
             if kruskal_queue is None:
@@ -257,3 +353,9 @@ def main(argv=None):
                 window.update()
 
     printTiming("Execution", start_time, args.show_progress)
+    if args.quality_report:
+        report = paperStyleReport(
+            segment_list,
+            include_rank_stats=args.rank_report,
+        )
+        print(formatPaperStyleReport(report))

@@ -40,6 +40,15 @@ class CliTests(unittest.TestCase):
         self.assertTrue(args.show_progress)
         self.assertTrue(args.connect_best_buddy_first)
         self.assertTrue(args.use_kruskal_priority_queue)
+        self.assertFalse(args.staged_kruskal)
+        self.assertIsNone(args.staged_kruskal_score_limit)
+        self.assertFalse(args.gallagher_mode)
+        self.assertFalse(args.quality_report)
+        self.assertFalse(args.rank_report)
+        self.assertFalse(args.symmetric_compatibility)
+        self.assertFalse(args.gallagher_pairwise_kruskal)
+        self.assertEqual(10, args.gallagher_edge_candidates)
+        self.assertFalse(args.gallagher_mutual_edges)
         self.assertTrue(args.trim_fill)
         self.assertFalse(args.relax_frame_bounds)
         self.assertFalse(args.endgame_search)
@@ -102,6 +111,14 @@ class CliTests(unittest.TestCase):
             "--trim-fill-border",
             "--trim-fill-component-frame",
             "--trim-fill-edge-preserving",
+            "--staged-kruskal-score-limit",
+            "0.75",
+            "--quality-report",
+            "--rank-report",
+            "--symmetric-compatibility",
+            "--gallagher-edge-candidates",
+            "7",
+            "--gallagher-mutual-edges",
             "--shuffle-seed",
             "123",
         ])
@@ -116,6 +133,15 @@ class CliTests(unittest.TestCase):
         self.assertFalse(args.use_kruskal_priority_queue)
         self.assertFalse(args.trim_fill)
         self.assertTrue(args.boost_big_piece_priority)
+        self.assertFalse(args.staged_kruskal)
+        self.assertEqual(0.75, args.staged_kruskal_score_limit)
+        self.assertFalse(args.gallagher_mode)
+        self.assertTrue(args.quality_report)
+        self.assertTrue(args.rank_report)
+        self.assertTrue(args.symmetric_compatibility)
+        self.assertFalse(args.gallagher_pairwise_kruskal)
+        self.assertEqual(7, args.gallagher_edge_candidates)
+        self.assertTrue(args.gallagher_mutual_edges)
         self.assertTrue(args.relax_frame_bounds)
         self.assertTrue(args.endgame_search)
         self.assertEqual(4, args.score_workers)
@@ -159,6 +185,83 @@ class CliTests(unittest.TestCase):
                 "prim",
                 "--beam-width",
                 "2",
+            ])
+
+    def test_solver_cli_parses_staged_kruskal(self):
+        args = solver.parseArguments([
+            "--staged-kruskal",
+            "--staged-kruskal-score-limit",
+            "1.25",
+        ])
+
+        self.assertTrue(args.staged_kruskal)
+        self.assertEqual(1.25, args.staged_kruskal_score_limit)
+
+    def test_solver_cli_rejects_staged_kruskal_with_prim(self):
+        with self.assertRaises(SystemExit):
+            solver.parseArguments([
+                "--assembly-type",
+                "prim",
+                "--staged-kruskal",
+            ])
+
+    def test_solver_cli_rejects_staged_kruskal_with_beam(self):
+        with self.assertRaises(SystemExit):
+            solver.parseArguments([
+                "--beam-width",
+                "2",
+                "--staged-kruskal",
+            ])
+
+    def test_solver_cli_rejects_negative_staged_kruskal_score_limit(self):
+        with self.assertRaises(SystemExit):
+            solver.parseArguments([
+                "--staged-kruskal-score-limit",
+                "-1",
+            ])
+
+    def test_solver_cli_gallagher_mode_forces_paper_baseline_options(self):
+        args = solver.parseArguments([
+            "--gallagher-mode",
+            "--color-type",
+            "lab",
+            "--score-algorithm",
+            "euclidean",
+            "--score-mode",
+            "dissimilarity",
+            "--best-buddy",
+            "--trim-fill",
+            "--staged-kruskal",
+            "--beam-width",
+            "3",
+        ])
+
+        self.assertTrue(args.gallagher_mode)
+        self.assertEqual(solver.ColorType.RGB, args.color_type)
+        self.assertEqual(solver.ScoreAlgorithm.MGC_DISTANCE, args.score_algorithm)
+        self.assertEqual(solver.ScoreMode.RELIABILITY, args.score_mode)
+        self.assertTrue(args.symmetric_compatibility)
+        self.assertTrue(args.gallagher_pairwise_kruskal)
+        self.assertEqual(solver.AssemblyType.KRUSKAL, args.assembly_type)
+        self.assertEqual(
+            solver.CompareWithOtherSegments.ONLY_BEST,
+            args.compare_type,
+        )
+        self.assertFalse(args.connect_best_buddy_first)
+        self.assertTrue(args.use_kruskal_priority_queue)
+        self.assertFalse(args.boost_big_piece_priority)
+        self.assertFalse(args.staged_kruskal)
+        self.assertEqual(1, args.beam_width)
+        self.assertIsNone(args.beam_candidates)
+        self.assertIsNone(args.beam_start_components)
+        self.assertFalse(args.trim_fill)
+        self.assertTrue(args.quality_report)
+
+    def test_solver_cli_rejects_invalid_gallagher_edge_candidates(self):
+        with self.assertRaises(SystemExit):
+            solver.parseArguments([
+                "--gallagher-edge-candidates",
+                "0",
             ])
 
     def test_solver_cli_rejects_hybrid_without_beam(self):
@@ -920,8 +1023,52 @@ class ScoreTests(unittest.TestCase):
             segment.score_dict[1, solver.JoinDirection.RIGHT, 4],
         )
 
+    def test_symmetric_compatibility_averages_reciprocal_directed_scores(self):
+        for score_dict in ({}, solver.DenseScoreTable(3)):
+            segment = self.make_segment(
+                np.zeros((2, 2, 3)),
+                piece_number=1,
+                score_dict=score_dict,
+            )
+            segment.score_dict[1, solver.JoinDirection.RIGHT, 2] = 0.2
+            segment.score_dict[2, solver.JoinDirection.LEFT, 1] = 0.6
+            segment.score_dict[1, solver.JoinDirection.RIGHT, 3] = 0.5
+            segment.score_dict[3, solver.JoinDirection.LEFT, 1] = 0.7
+
+            solver.applySymmetricCompatibilityScores([segment])
+
+            self.assertAlmostEqual(
+                0.4,
+                segment.score_dict[1, solver.JoinDirection.RIGHT, 2],
+            )
+            self.assertAlmostEqual(
+                0.4,
+                segment.score_dict[2, solver.JoinDirection.LEFT, 1],
+            )
+            self.assertAlmostEqual(
+                0.6,
+                segment.score_dict[1, solver.JoinDirection.RIGHT, 3],
+            )
+            self.assertAlmostEqual(
+                0.6,
+                segment.score_dict[3, solver.JoinDirection.LEFT, 1],
+            )
+
 
 class ImageWriteTests(unittest.TestCase):
+    def test_gallagher_rgb_normalization_scales_uint8_images(self):
+        from puzzle_solver.runner import normalizeRgbForGallagher
+
+        image = np.asarray([[[0, 128, 255]]], dtype=np.uint8)
+
+        normalized = normalizeRgbForGallagher(image)
+
+        self.assertEqual(np.float64, normalized.dtype)
+        np.testing.assert_allclose(
+            np.asarray([[[0.0, 128 / 255.0, 1.0]]]),
+            normalized,
+        )
+
     def test_prepare_image_for_write_converts_unit_float_images_to_uint8(self):
         image = np.asarray([[[0.0, 0.5, 1.0]]])
 
@@ -2108,6 +2255,113 @@ class KruskalAssemblyTests(unittest.TestCase):
         self.assertEqual(peeked, peeked_again)
         self.assertEqual(peeked, popped)
 
+    def test_staged_kruskal_prefers_multi_contact_join_first(self):
+        score_dict = defaultdict(lambda: math.inf)
+        connections_dict = {}
+
+        segments = [
+            solver.Segment(
+                np.zeros((2, 2, 3)),
+                max_width=4,
+                max_height=4,
+                piece_number=piece_number,
+                component_id=piece_number,
+                score_dict=score_dict,
+                connections_dict=connections_dict,
+            )
+            for piece_number in range(1, 6)
+        ]
+        first, second, third, fourth, fifth = segments
+        first.pic_connection_matrix = np.asarray(
+            [[first], [second]],
+            dtype=object,
+        )
+        first.binary_connection_matrix = np.asarray([[1], [1]])
+        third.pic_connection_matrix = np.asarray(
+            [[third], [fourth]],
+            dtype=object,
+        )
+        third.binary_connection_matrix = np.asarray([[1], [1]])
+
+        score_dict[
+            first.piece_number,
+            solver.JoinDirection.RIGHT,
+            third.piece_number,
+        ] = 5.0
+        score_dict[
+            second.piece_number,
+            solver.JoinDirection.RIGHT,
+            fourth.piece_number,
+        ] = 5.0
+        score_dict[
+            first.piece_number,
+            solver.JoinDirection.LEFT,
+            fifth.piece_number,
+        ] = 1.0
+
+        staged_segments = [first, third, fifth]
+        history = []
+
+        def record_join(best_connection, round_number):
+            history.append((
+                best_connection.own_segment.piece_number,
+                best_connection.join_segment.piece_number,
+                best_connection.score,
+                best_connection.contact_count,
+            ))
+
+        solver.assembleKruskalStaged(
+            staged_segments,
+            original_size=5,
+            on_join=record_join,
+        )
+
+        self.assertEqual((1, 3, 5.0, 2), history[0])
+
+    def test_gallagher_pairwise_kruskal_assembles_from_piece_edges(self):
+        score_dict = solver.DenseScoreTable(4)
+        connections_dict = {}
+        segments = [
+            solver.Segment(
+                np.zeros((2, 2, 3)),
+                max_width=2,
+                max_height=2,
+                piece_number=piece_number,
+                component_id=piece_number,
+                score_dict=score_dict,
+                connections_dict=connections_dict,
+            )
+            for piece_number in range(1, 5)
+        ]
+        for own_piece in range(1, 5):
+            for join_piece in range(1, 5):
+                if own_piece == join_piece:
+                    continue
+                for direction in solver.JoinDirection:
+                    score_dict[own_piece, direction, join_piece] = 100.0
+        score_dict[1, solver.JoinDirection.RIGHT, 2] = 1.0
+        score_dict[2, solver.JoinDirection.LEFT, 1] = 1.0
+        score_dict[1, solver.JoinDirection.DOWN, 3] = 1.0
+        score_dict[3, solver.JoinDirection.UP, 1] = 1.0
+        score_dict[2, solver.JoinDirection.DOWN, 4] = 1.0
+        score_dict[4, solver.JoinDirection.UP, 2] = 1.0
+        score_dict[3, solver.JoinDirection.RIGHT, 4] = 1.0
+        score_dict[4, solver.JoinDirection.LEFT, 3] = 1.0
+
+        rounds = solver.assembleGallagherPairwiseKruskal(
+            segments,
+            original_size=4,
+            top_candidates_per_edge=1,
+            mutual_edges_only=True,
+        )
+
+        self.assertEqual(3, rounds)
+        self.assertEqual(1, len(segments))
+        self.assertEqual(
+            ((1, 2), (3, 4)),
+            self.segment_layout(segments[0]),
+        )
+
     def test_beam_search_with_one_candidate_matches_greedy_queue(self):
         queue_segments, queue_original_size = self.make_segments()
         beam_segments, beam_original_size = self.make_segments()
@@ -2312,6 +2566,46 @@ class KruskalAssemblyTests(unittest.TestCase):
 
         self.assertEqual(1.0, connection.score)
         self.assertEqual(((1, 2), (4, 3)), connection_matrix)
+
+
+class EvaluationTests(unittest.TestCase):
+    def test_paper_style_report_scores_solved_grid(self):
+        score_dict = {}
+        connections_dict = {}
+        pieces = [
+            solver.Segment(
+                np.full((2, 2, 3), piece_number, dtype=np.uint8),
+                max_width=2,
+                max_height=2,
+                piece_number=piece_number,
+                component_id=piece_number,
+                score_dict=score_dict,
+                connections_dict=connections_dict,
+            )
+            for piece_number in range(1, 5)
+        ]
+        root = pieces[0]
+        root.pic_connection_matrix = np.asarray(
+            [
+                [pieces[0], pieces[1]],
+                [pieces[2], pieces[3]],
+            ],
+            dtype=object,
+        )
+        root.binary_connection_matrix = np.asarray([[1, 1], [1, 1]])
+
+        report = solver.paperStyleReport([root])
+
+        self.assertEqual(4, report["pieces"])
+        self.assertEqual(1, report["components"])
+        self.assertEqual(4, report["largest_component"])
+        self.assertEqual(4, report["neighbor"]["correct"])
+        self.assertEqual(0, report["neighbor"]["incorrect"])
+        self.assertEqual(1.0, report["neighbor"]["coverage"])
+        self.assertEqual(1.0, report["neighbor"]["precision"])
+        self.assertEqual(4, report["neighbor"]["largest_correct_component"])
+        self.assertEqual(4, report["direct"]["direct"])
+        self.assertEqual(1.0, report["direct"]["accuracy"])
 
 
 if __name__ == "__main__":

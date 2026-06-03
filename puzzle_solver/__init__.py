@@ -1,7 +1,9 @@
 from .assembly import (
     KruskalConnectionPriorityQueue,
+    assembleGallagherPairwiseKruskal,
     assembleKruskalBeamSearch,
     assembleKruskalHybridBeamSearch,
+    assembleKruskalStaged,
     assembleKruskalWithPriorityQueue,
     calculateSinglePieceConnection,
     cloneSegmentList,
@@ -20,6 +22,7 @@ from .distances import (
     mahalanobisEdgeDistance,
     mgcDirectionalDistance,
     mgcEdgeDistance,
+    mgcEdgeMahalanobisDistance,
 )
 from .enums import (
     JOIN_EDGE_PAIRS,
@@ -30,6 +33,13 @@ from .enums import (
     JoinDirection,
     ScoreAlgorithm,
     ScoreMode,
+)
+from .evaluation import (
+    assemblyQuality,
+    directPlacementQuality,
+    formatPaperStyleReport,
+    paperStyleReport,
+    trueNeighborRankStats,
 )
 from .image_io import ensureOutputDirectory, prepareImageForWrite, saveImage
 from .models import BestConnection, ScoreEdge, ScorePayload, Segment
@@ -49,6 +59,7 @@ from .score_helpers import reciprocalScoreEntries, scorePayloadPair
 from .score_table import DenseScoreTable, createScoreTable
 from .scoring import (
     applyReliabilityScores,
+    applySymmetricCompatibilityScores,
     applyScoreMode,
     buildScorePayloads,
     calculateScores,

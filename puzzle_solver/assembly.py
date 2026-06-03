@@ -4,9 +4,17 @@ import random
 
 import numpy as np
 
-from .enums import CompareWithOtherSegments, JoinDirection
+from .enums import CompareWithOtherSegments, JoinDirection, OPPOSITE_DIRECTIONS
 from .models import BestConnection, Segment, scoreValuesArray
 from .score_table import DIRECTIONS_BY_INDEX
+
+
+DIRECTION_DELTAS = {
+    JoinDirection.UP: (-1, 0),
+    JoinDirection.DOWN: (1, 0),
+    JoinDirection.LEFT: (0, -1),
+    JoinDirection.RIGHT: (0, 1),
+}
 
 
 class KruskalBeamState:
@@ -63,10 +71,14 @@ class KruskalConnectionPriorityQueue:
             segment_list,
             boost_priority_of_big_pieces_joining=False,
             compare_type=CompareWithOtherSegments.ONLY_BEST,
-            compare_mode=CompareWithOtherSegments.ONLY_BEST):
+            compare_mode=CompareWithOtherSegments.ONLY_BEST,
+            min_contact_count=1,
+            max_score=None):
         self.boost_priority_of_big_pieces_joining = boost_priority_of_big_pieces_joining
         self.compare_type = compare_type
         self.compare_mode = compare_mode
+        self.min_contact_count = min_contact_count
+        self.max_score = max_score
         self._counter = itertools.count()
         self._heap = []
         self.addAllConnections(segment_list)
@@ -141,6 +153,8 @@ class KruskalConnectionPriorityQueue:
         )
         cloned.compare_type = self.compare_type
         cloned.compare_mode = self.compare_mode
+        cloned.min_contact_count = self.min_contact_count
+        cloned.max_score = self.max_score
         cloned_heap = []
         counter = 0
         append_heap = cloned_heap.append
@@ -222,6 +236,10 @@ class KruskalConnectionPriorityQueue:
         )
         if not connection.hasConnection():
             return
+        if connection.contact_count < self.min_contact_count:
+            return
+        if self.max_score is not None and connection.score > self.max_score:
+            return
         heapq.heappush(
             self._heap,
             (
@@ -264,6 +282,279 @@ def assembleKruskalWithPriorityQueue(
         )
         if on_join is not None:
             on_join(best_connection, rounds)
+        rounds += 1
+    return rounds
+
+
+def assembleKruskalStaged(
+        segment_list,
+        original_size,
+        boost_priority_of_big_pieces_joining=False,
+        compare_type=CompareWithOtherSegments.ONLY_BEST,
+        compare_mode=CompareWithOtherSegments.ONLY_BEST,
+        min_contact_count=2,
+        max_multi_contact_score=None,
+        on_join=None):
+    multi_contact_queue = KruskalConnectionPriorityQueue(
+        segment_list,
+        boost_priority_of_big_pieces_joining,
+        compare_type,
+        compare_mode,
+        min_contact_count=min_contact_count,
+        max_score=max_multi_contact_score,
+    )
+    fallback_queue = KruskalConnectionPriorityQueue(
+        segment_list,
+        boost_priority_of_big_pieces_joining,
+        compare_type,
+        compare_mode,
+    )
+    rounds = 0
+    while len(segment_list) > 1:
+        best_connection = multi_contact_queue.popBestConnection(segment_list)
+        if best_connection.pic_connection_matrix is None:
+            best_connection = fallback_queue.popBestConnection(segment_list)
+        if best_connection.pic_connection_matrix is None:
+            break
+        joinPieces(best_connection, segment_list, original_size)
+        multi_contact_queue.addConnectionsFor(
+            best_connection.own_segment,
+            segment_list,
+        )
+        fallback_queue.addConnectionsFor(
+            best_connection.own_segment,
+            segment_list,
+        )
+        if on_join is not None:
+            on_join(best_connection, rounds)
+        rounds += 1
+    return rounds
+
+
+def iterComponentPieces(segment):
+    for row, col in zip(*np.where(segment.pic_connection_matrix != 0)):
+        yield int(row), int(col), segment.pic_connection_matrix[row, col]
+
+
+def piecePositionsInSegment(segment):
+    return {
+        piece.piece_number: (row, col)
+        for row, col, piece in iterComponentPieces(segment)
+    }
+
+
+def updatePieceSegmentMap(piece_to_segment, segment):
+    for _row, _col, piece in iterComponentPieces(segment):
+        piece_to_segment[piece.piece_number] = segment
+
+
+def pairwiseKruskalCandidateEdges(
+        segment_list,
+        top_candidates_per_edge=10,
+        mutual_edges_only=False):
+    if not segment_list:
+        return []
+    score_dict = segment_list[0].score_dict
+    score_values = scoreValuesArray(score_dict)
+    piece_count = segment_list[0].max_width * segment_list[0].max_height
+    candidate_limit = min(top_candidates_per_edge, piece_count - 1)
+    edges = []
+    counter = itertools.count()
+
+    if score_values is not None:
+        best_by_piece_direction = None
+        if mutual_edges_only:
+            best_by_piece_direction = np.full(
+                (piece_count + 1, len(DIRECTIONS_BY_INDEX)),
+                -1,
+                dtype=np.int32,
+            )
+            for own_piece in range(1, piece_count + 1):
+                for direction_index in range(len(DIRECTIONS_BY_INDEX)):
+                    scores = np.asarray(
+                        score_values[own_piece, direction_index, :],
+                        dtype=np.float64,
+                    ).copy()
+                    scores[0] = np.inf
+                    scores[own_piece] = np.inf
+                    scores[np.isnan(scores)] = np.inf
+                    best_by_piece_direction[own_piece, direction_index] = (
+                        int(np.argmin(scores))
+                    )
+        for own_piece in range(1, piece_count + 1):
+            for direction_index, direction in enumerate(DIRECTIONS_BY_INDEX):
+                scores = np.asarray(
+                    score_values[own_piece, direction_index, :],
+                    dtype=np.float64,
+                ).copy()
+                scores[0] = np.inf
+                scores[own_piece] = np.inf
+                scores[np.isnan(scores)] = np.inf
+                if candidate_limit <= 0:
+                    continue
+                candidate_indices = np.argpartition(
+                    scores,
+                    candidate_limit - 1,
+                )[:candidate_limit]
+                for join_piece in candidate_indices[
+                        np.argsort(scores[candidate_indices])]:
+                    score = float(scores[join_piece])
+                    if np.isinf(score):
+                        continue
+                    if mutual_edges_only:
+                        opposite_index = DIRECTIONS_BY_INDEX.index(
+                            OPPOSITE_DIRECTIONS[direction],
+                        )
+                        if (
+                                best_by_piece_direction[
+                                    int(join_piece),
+                                    opposite_index,
+                                ]
+                                != own_piece):
+                            continue
+                    edges.append((
+                        score,
+                        next(counter),
+                        own_piece,
+                        direction,
+                        int(join_piece),
+                    ))
+    else:
+        for own_piece in range(1, piece_count + 1):
+            for direction in JoinDirection:
+                candidates = []
+                for join_piece in range(1, piece_count + 1):
+                    if join_piece == own_piece:
+                        continue
+                    score = score_dict.get(
+                        (own_piece, direction, join_piece),
+                        None,
+                    )
+                    if score is None:
+                        continue
+                    candidates.append((score, join_piece))
+                for score, join_piece in heapq.nsmallest(
+                        candidate_limit,
+                        candidates):
+                    edges.append((
+                        float(score),
+                        next(counter),
+                        own_piece,
+                        direction,
+                        join_piece,
+                    ))
+
+    heapq.heapify(edges)
+    return edges
+
+
+def calculatePairwiseKruskalConnection(
+        own_segment,
+        join_segment,
+        own_piece_number,
+        direction,
+        join_piece_number,
+        score):
+    own_positions = piecePositionsInSegment(own_segment)
+    join_positions = piecePositionsInSegment(join_segment)
+    own_position = own_positions.get(own_piece_number)
+    join_position = join_positions.get(join_piece_number)
+    if own_position is None or join_position is None:
+        return BestConnection()
+
+    row_delta, col_delta = DIRECTION_DELTAS[direction]
+    target_join_row = own_position[0] + row_delta
+    target_join_col = own_position[1] + col_delta
+    join_row_offset = target_join_row - join_position[0]
+    join_col_offset = target_join_col - join_position[1]
+
+    own_piece_positions = tuple(iterComponentPieces(own_segment))
+    join_piece_positions = tuple(iterComponentPieces(join_segment))
+    rows = [row for row, _col, _piece in own_piece_positions]
+    cols = [col for _row, col, _piece in own_piece_positions]
+    rows.extend(row + join_row_offset for row, _col, _piece in join_piece_positions)
+    cols.extend(col + join_col_offset for _row, col, _piece in join_piece_positions)
+    min_row = min(rows)
+    max_row = max(rows)
+    min_col = min(cols)
+    max_col = max(cols)
+    height = max_row - min_row + 1
+    width = max_col - min_col + 1
+    if (
+            getattr(own_segment, "enforce_frame_bounds", True)
+            and (
+                height > own_segment.max_height
+                or width > own_segment.max_width
+            )):
+        return BestConnection()
+
+    combined_pointer = np.zeros((height, width), dtype=object)
+    combined_binary = np.zeros((height, width))
+    for row, col, piece in own_piece_positions:
+        combined_row = row - min_row
+        combined_col = col - min_col
+        combined_pointer[combined_row, combined_col] = piece
+        combined_binary[combined_row, combined_col] = 1
+    for row, col, piece in join_piece_positions:
+        combined_row = row + join_row_offset - min_row
+        combined_col = col + join_col_offset - min_col
+        if combined_pointer[combined_row, combined_col] != 0:
+            return BestConnection()
+        combined_pointer[combined_row, combined_col] = piece
+        combined_binary[combined_row, combined_col] = 1
+
+    connection = BestConnection(
+        own_segment=own_segment,
+        pic_connection_matrix=combined_pointer,
+        join_segment=join_segment,
+        binary_connection_matrix=combined_binary,
+    )
+    connection.score = score
+    connection.second_best_score = score
+    connection.contact_count = 1
+    return connection
+
+
+def assembleGallagherPairwiseKruskal(
+        segment_list,
+        original_size,
+        top_candidates_per_edge=10,
+        mutual_edges_only=False,
+        on_join=None):
+    candidate_edges = pairwiseKruskalCandidateEdges(
+        segment_list,
+        top_candidates_per_edge,
+        mutual_edges_only,
+    )
+    piece_to_segment = {}
+    for segment in segment_list:
+        updatePieceSegmentMap(piece_to_segment, segment)
+
+    rounds = 0
+    while len(segment_list) > 1 and candidate_edges:
+        score, _counter, own_piece, direction, join_piece = heapq.heappop(
+            candidate_edges,
+        )
+        own_segment = piece_to_segment.get(own_piece)
+        join_segment = piece_to_segment.get(join_piece)
+        if own_segment is None or join_segment is None:
+            continue
+        if own_segment is join_segment:
+            continue
+        connection = calculatePairwiseKruskalConnection(
+            own_segment,
+            join_segment,
+            own_piece,
+            direction,
+            join_piece,
+            score,
+        )
+        if connection.pic_connection_matrix is None:
+            continue
+        joinPieces(connection, segment_list, original_size)
+        updatePieceSegmentMap(piece_to_segment, connection.own_segment)
+        if on_join is not None:
+            on_join(connection, rounds)
         rounds += 1
     return rounds
 
@@ -346,6 +637,7 @@ def cloneKruskalConnectionForBranch(
     )
     child_connection.score = connection.score
     child_connection.second_best_score = connection.second_best_score
+    child_connection.contact_count = connection.contact_count
 
     if connection.kruskal_connection_data is not None:
         (
@@ -951,6 +1243,7 @@ def buildSinglePieceConnection(
     )
     connection.score = best_score
     connection.second_best_score = second_best_score
+    connection.contact_count = 1
     return connection
 
 

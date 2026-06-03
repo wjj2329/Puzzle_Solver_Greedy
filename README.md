@@ -126,6 +126,22 @@ For a faster non-GUI run while experimenting:
 python3 -m puzzle_solver --piece-size 120 --score-mode reliability --no-animation --no-save-assembly --no-save-segments --no-progress
 ```
 
+For the fixed-orientation Gallagher-style baseline, use:
+
+```bash
+python3 -m puzzle_solver --gallagher-mode --piece-size 20 --no-animation --no-save-segments
+```
+
+`--gallagher-mode` forces normalized RGB input, square-rooted Mahalanobis
+Gradient Compatibility (`mgc_distance`), second-best reliability scoring,
+reciprocal symmetric seam compatibility, pairwise edge-ordered Kruskal
+assembly, no best-buddy prepass, and no trim/fill cleanup. It also prints
+paper-style quality metrics: neighbor accuracy, direct placement accuracy,
+largest assembled component, and largest correctly connected component. Add
+`--rank-report` to include true-neighbor top-1/top-2/top-5 score ranks. Add
+`--gallagher-mutual-edges` to queue only reciprocal best edges, which can trade
+coverage for cleaner joins.
+
 `--score-workers` omitted uses the available CPU count for score calculation.
 Set it to `1` to force serial scoring. `--score-executor` can be `"serial"`,
 `"thread"`, or `"process"`. The default `"process"` backend gives true
@@ -138,17 +154,31 @@ Use `--score-storage dict` to run with the original dictionary storage.
 `--kruskal-priority-queue` uses the faster priority-queue assembly path. Use
 `--no-kruskal-priority-queue` for the older full-scan Kruskal loop.
 
+`--staged-kruskal` adds a safer Kruskal queue mode for smaller pieces: it first
+prefers component joins with at least two touching edges, then falls back to
+ordinary one-edge joins when no strong multi-contact join is available. In
+`--score-mode reliability`, the multi-contact stage defaults to a score limit of
+`1.0`; override that with `--staged-kruskal-score-limit`.
+
 `--score-mode dissimilarity` uses the original lower-is-better edge costs.
 Use `--score-mode reliability` to convert those costs into second-best
 reliability scores before best-buddy and assembly.
 
-`--score-algorithm mgc` uses Gallagher-style Mahalanobis Gradient
-Compatibility. It compares the seam gradient against each piece's internal
-edge-gradient distribution, then sums both directions before optional
-second-best reliability scoring. A paper-style run is:
+`--score-algorithm mgc` uses squared Gallagher-style Mahalanobis Gradient
+Compatibility. `--score-algorithm mgc_distance` uses the square-rooted
+Mahalanobis distance form used by `--gallagher-mode`. Both compare the seam
+gradient against each piece's internal edge-gradient distribution, then sum
+both directions before optional second-best reliability scoring. A paper-style
+run is:
 
 ```bash
-python3 -m puzzle_solver --score-algorithm mgc --score-mode reliability
+python3 -m puzzle_solver --gallagher-mode
+```
+
+For the 960x960 William image at 20-pixel pieces, a useful starting command is:
+
+```bash
+python3 -m puzzle_solver --piece-size 20 --score-mode reliability --staged-kruskal --endgame-search --trim-fill-edge-preserving --no-animation --no-save-segments
 ```
 
 `--trim-fill` runs a Gallagher-style cleanup after greedy assembly: the largest

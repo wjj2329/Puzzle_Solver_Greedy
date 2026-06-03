@@ -135,6 +135,14 @@ def print_quality(label, quality):
     )
 
 
+def staged_kruskal_score_limit(args, score_mode):
+    if args.staged_kruskal_score_limit is not None:
+        return args.staged_kruskal_score_limit
+    if score_mode == Solver.ScoreMode.RELIABILITY:
+        return 1.0
+    return None
+
+
 def run_profile(args):
     timer = PhaseTimer()
     output_dir = args.output_dir
@@ -211,7 +219,7 @@ def run_profile(args):
         after_best_buddy = len(segments)
 
     kruskal_queue = None
-    if args.assembly_strategy == "queue":
+    if args.assembly_strategy == "queue" and not args.staged_kruskal:
         with timer.time("build_kruskal_queue"):
             kruskal_queue = Solver.KruskalConnectionPriorityQueue(
                 segments,
@@ -262,7 +270,36 @@ def run_profile(args):
                     show_progress=args.show_progress,
                     on_join=save_beam_join if args.save_assembly else None,
                 )
-    while len(segments) > 1 and args.assembly_strategy != "beam":
+    elif args.staged_kruskal:
+        def save_staged_join(best_connection, round_number):
+            if not args.save_assembly:
+                return
+            Solver.saveImage(
+                best_connection,
+                args.piece_size,
+                round_number,
+                color_type,
+                args.output_name,
+                output_dir=output_dir,
+            )
+
+        with timer.time("assembly_staged_kruskal"):
+            rounds = Solver.assembleKruskalStaged(
+                segments,
+                original_size,
+                boost_priority_of_big_pieces_joining=args.boost_big_piece_priority,
+                compare_type=compare_type,
+                compare_mode=compare_type,
+                max_multi_contact_score=staged_kruskal_score_limit(
+                    args,
+                    score_mode,
+                ),
+                on_join=save_staged_join if args.save_assembly else None,
+            )
+    while (
+            len(segments) > 1
+            and args.assembly_strategy != "beam"
+            and not args.staged_kruskal):
         if kruskal_queue is None:
             with timer.time("assembly_find_best"):
                 best_connection = Solver.findBestConnectionKruskal(
@@ -351,6 +388,11 @@ def run_profile(args):
         f"workers={format_workers(score_workers)}"
     )
     print(f"assembly_strategy: {args.assembly_strategy}")
+    print(f"staged_kruskal: {args.staged_kruskal}")
+    print(
+        "staged_kruskal_score_limit: "
+        f"{staged_kruskal_score_limit(args, score_mode)}"
+    )
     print(f"relax_frame_bounds: {args.relax_frame_bounds}")
     print(f"endgame_search: {args.endgame_search}")
     if args.assembly_strategy == "beam":
@@ -442,6 +484,23 @@ def main():
         "--boost-big-piece-priority",
         action="store_true",
         help="Enable the existing big-piece priority score adjustment.",
+    )
+    parser.add_argument(
+        "--staged-kruskal",
+        action="store_true",
+        help=(
+            "Prefer joins with at least two touching edges before falling "
+            "back to ordinary Kruskal joins."
+        ),
+    )
+    parser.add_argument(
+        "--staged-kruskal-score-limit",
+        type=float,
+        default=None,
+        help=(
+            "Maximum score allowed in the multi-contact stage. Omit to use "
+            "1.0 in reliability mode and no limit in dissimilarity mode."
+        ),
     )
     parser.add_argument(
         "--relax-frame-bounds",
