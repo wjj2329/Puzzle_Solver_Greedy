@@ -45,10 +45,37 @@ class CliTests(unittest.TestCase):
         self.assertFalse(args.gallagher_mode)
         self.assertFalse(args.quality_report)
         self.assertFalse(args.rank_report)
+        self.assertFalse(args.diagnostic_report)
+        self.assertEqual(12, args.diagnostic_limit)
         self.assertFalse(args.symmetric_compatibility)
         self.assertFalse(args.gallagher_pairwise_kruskal)
         self.assertEqual(10, args.gallagher_edge_candidates)
         self.assertFalse(args.gallagher_mutual_edges)
+        self.assertFalse(args.growing_consensus_kruskal)
+        self.assertEqual(10, args.growing_consensus_edge_candidates)
+        self.assertEqual(1, args.growing_consensus_min_support)
+        self.assertEqual(25000, args.growing_consensus_max_edges)
+        self.assertEqual("score", args.growing_consensus_priority)
+        self.assertTrue(args.growing_consensus_propose_missing)
+        self.assertFalse(args.growing_consensus_fallback_pairwise)
+        self.assertFalse(args.repair_bad_joins)
+        self.assertEqual(1.0, args.repair_bad_join_score_limit)
+        self.assertIsNone(args.repair_remerge_score_limit)
+        self.assertEqual("multi-contact", args.repair_remerge_strategy)
+        self.assertEqual(1, args.repair_iterations)
+        self.assertTrue(args.repair_frame_placement)
+        self.assertEqual(2, args.repair_frame_placement_min_contacts)
+        self.assertFalse(args.repair_consensus_shifts)
+        self.assertEqual(8, args.repair_consensus_top_k)
+        self.assertEqual(1, args.repair_consensus_min_local_support)
+        self.assertEqual(6, args.repair_consensus_min_contacts)
+        self.assertEqual(1, args.repair_consensus_max_shift)
+        self.assertTrue(args.repair_consensus_remerge)
+        self.assertTrue(args.repair_consensus_frame_placement)
+        self.assertEqual(3, args.repair_consensus_frame_min_contacts)
+        self.assertEqual("neighborhood", args.prim_seed_strategy)
+        self.assertEqual(4, args.prim_seed_neighbors)
+        self.assertTrue(args.use_prim_priority_queue)
         self.assertTrue(args.trim_fill)
         self.assertFalse(args.relax_frame_bounds)
         self.assertFalse(args.endgame_search)
@@ -119,6 +146,11 @@ class CliTests(unittest.TestCase):
             "--gallagher-edge-candidates",
             "7",
             "--gallagher-mutual-edges",
+            "--prim-seed-strategy",
+            "random",
+            "--prim-seed-neighbors",
+            "3",
+            "--no-prim-priority-queue",
             "--shuffle-seed",
             "123",
         ])
@@ -142,6 +174,9 @@ class CliTests(unittest.TestCase):
         self.assertFalse(args.gallagher_pairwise_kruskal)
         self.assertEqual(7, args.gallagher_edge_candidates)
         self.assertTrue(args.gallagher_mutual_edges)
+        self.assertEqual("random", args.prim_seed_strategy)
+        self.assertEqual(3, args.prim_seed_neighbors)
+        self.assertFalse(args.use_prim_priority_queue)
         self.assertTrue(args.relax_frame_bounds)
         self.assertTrue(args.endgame_search)
         self.assertEqual(4, args.score_workers)
@@ -263,6 +298,168 @@ class CliTests(unittest.TestCase):
                 "--gallagher-edge-candidates",
                 "0",
             ])
+
+    def test_solver_cli_rejects_invalid_diagnostic_limit(self):
+        with self.assertRaises(SystemExit):
+            solver.parseArguments([
+                "--diagnostic-limit",
+                "0",
+            ])
+
+    def test_solver_cli_rejects_invalid_prim_seed_neighbors(self):
+        with self.assertRaises(SystemExit):
+            solver.parseArguments([
+                "--prim-seed-neighbors",
+                "0",
+            ])
+
+    def test_solver_cli_parses_bad_join_repair_for_pairwise_kruskal(self):
+        args = solver.parseArguments([
+            "--gallagher-pairwise-kruskal",
+            "--repair-bad-joins",
+            "--repair-bad-join-score-limit",
+            "0.9",
+            "--repair-remerge-score-limit",
+            "0.8",
+            "--repair-remerge-strategy",
+            "pairwise",
+            "--repair-iterations",
+            "2",
+            "--no-repair-frame-placement",
+            "--repair-frame-placement-min-contacts",
+            "3",
+        ])
+
+        self.assertTrue(args.gallagher_pairwise_kruskal)
+        self.assertTrue(args.repair_bad_joins)
+        self.assertEqual(0.9, args.repair_bad_join_score_limit)
+        self.assertEqual(0.8, args.repair_remerge_score_limit)
+        self.assertEqual("pairwise", args.repair_remerge_strategy)
+        self.assertEqual(2, args.repair_iterations)
+        self.assertFalse(args.repair_frame_placement)
+        self.assertEqual(3, args.repair_frame_placement_min_contacts)
+
+    def test_solver_cli_parses_prediction_score_algorithms(self):
+        args = solver.parseArguments([
+            "--score-algorithm",
+            "prediction",
+        ])
+        hybrid_args = solver.parseArguments([
+            "--score-algorithm",
+            "mgc-prediction",
+        ])
+
+        self.assertEqual(solver.ScoreAlgorithm.PREDICTION, args.score_algorithm)
+        self.assertEqual(
+            solver.ScoreAlgorithm.MGC_PREDICTION,
+            hybrid_args.score_algorithm,
+        )
+
+    def test_solver_cli_parses_consensus_shift_repair(self):
+        args = solver.parseArguments([
+            "--gallagher-pairwise-kruskal",
+            "--repair-consensus-shifts",
+            "--repair-consensus-top-k",
+            "3",
+            "--repair-consensus-min-local-support",
+            "0",
+            "--repair-consensus-min-contacts",
+            "4",
+            "--repair-consensus-max-shift",
+            "2",
+            "--no-repair-consensus-remerge",
+            "--no-repair-consensus-frame-placement",
+            "--repair-consensus-frame-min-contacts",
+            "5",
+        ])
+
+        self.assertTrue(args.repair_consensus_shifts)
+        self.assertEqual(3, args.repair_consensus_top_k)
+        self.assertEqual(0, args.repair_consensus_min_local_support)
+        self.assertEqual(4, args.repair_consensus_min_contacts)
+        self.assertEqual(2, args.repair_consensus_max_shift)
+        self.assertFalse(args.repair_consensus_remerge)
+        self.assertFalse(args.repair_consensus_frame_placement)
+        self.assertEqual(5, args.repair_consensus_frame_min_contacts)
+
+    def test_solver_cli_parses_growing_consensus_kruskal(self):
+        args = solver.parseArguments([
+            "--growing-consensus-kruskal",
+            "--growing-consensus-edge-candidates",
+            "7",
+            "--growing-consensus-min-support",
+            "2",
+            "--growing-consensus-max-edges",
+            "0",
+            "--growing-consensus-priority",
+            "support",
+            "--no-growing-consensus-propose-missing",
+            "--growing-consensus-fallback-pairwise",
+        ])
+
+        self.assertTrue(args.growing_consensus_kruskal)
+        self.assertEqual(7, args.growing_consensus_edge_candidates)
+        self.assertEqual(2, args.growing_consensus_min_support)
+        self.assertEqual(0, args.growing_consensus_max_edges)
+        self.assertEqual("support", args.growing_consensus_priority)
+        self.assertFalse(args.growing_consensus_propose_missing)
+        self.assertTrue(args.growing_consensus_fallback_pairwise)
+
+    def test_solver_cli_rejects_bad_join_repair_without_pairwise_kruskal(self):
+        with self.assertRaises(SystemExit):
+            solver.parseArguments([
+                "--repair-bad-joins",
+            ])
+
+    def test_solver_cli_rejects_consensus_shift_repair_without_pairwise_kruskal(self):
+        with self.assertRaises(SystemExit):
+            solver.parseArguments([
+                "--repair-consensus-shifts",
+            ])
+
+    def test_solver_cli_rejects_invalid_bad_join_repair_options(self):
+        for option, value in (
+                ("--repair-bad-join-score-limit", "-1"),
+                ("--repair-remerge-score-limit", "-1"),
+                ("--repair-iterations", "0"),
+                ("--repair-frame-placement-min-contacts", "0")):
+            with self.subTest(option=option):
+                with self.assertRaises(SystemExit):
+                    solver.parseArguments([
+                        "--gallagher-pairwise-kruskal",
+                        "--repair-bad-joins",
+                        option,
+                        value,
+                    ])
+
+    def test_solver_cli_rejects_invalid_consensus_shift_repair_options(self):
+        for option, value in (
+                ("--repair-consensus-top-k", "0"),
+                ("--repair-consensus-min-local-support", "-1"),
+                ("--repair-consensus-min-contacts", "0"),
+                ("--repair-consensus-max-shift", "-1"),
+                ("--repair-consensus-frame-min-contacts", "0")):
+            with self.subTest(option=option):
+                with self.assertRaises(SystemExit):
+                    solver.parseArguments([
+                        "--gallagher-pairwise-kruskal",
+                        "--repair-consensus-shifts",
+                        option,
+                        value,
+                    ])
+
+    def test_solver_cli_rejects_invalid_growing_consensus_options(self):
+        for option, value in (
+                ("--growing-consensus-edge-candidates", "0"),
+                ("--growing-consensus-min-support", "0"),
+                ("--growing-consensus-max-edges", "-1")):
+            with self.subTest(option=option):
+                with self.assertRaises(SystemExit):
+                    solver.parseArguments([
+                        "--growing-consensus-kruskal",
+                        option,
+                        value,
+                    ])
 
     def test_solver_cli_rejects_hybrid_without_beam(self):
         with self.assertRaises(SystemExit):
@@ -657,6 +854,95 @@ class ScoreTests(unittest.TestCase):
             ),
         )
 
+    def test_prediction_rewards_linear_continuation_across_boundary(self):
+        score_dict = {}
+        first = self.make_segment(
+            np.repeat(
+                np.asarray(
+                    [
+                        [[0.0], [10.0], [20.0]],
+                        [[0.0], [10.0], [20.0]],
+                        [[0.0], [10.0], [20.0]],
+                    ]
+                ),
+                3,
+                axis=2,
+            ),
+            piece_number=1,
+            score_dict=score_dict,
+        )
+        flat_match = self.make_segment(
+            np.repeat(
+                np.asarray(
+                    [
+                        [[20.0], [20.0], [20.0]],
+                        [[20.0], [20.0], [20.0]],
+                        [[20.0], [20.0], [20.0]],
+                    ]
+                ),
+                3,
+                axis=2,
+            ),
+            piece_number=2,
+            score_dict=score_dict,
+        )
+        prediction_match = self.make_segment(
+            np.repeat(
+                np.asarray(
+                    [
+                        [[30.0], [40.0], [50.0]],
+                        [[30.0], [40.0], [50.0]],
+                        [[30.0], [40.0], [50.0]],
+                    ]
+                ),
+                3,
+                axis=2,
+            ),
+            piece_number=3,
+            score_dict=score_dict,
+        )
+
+        first.calculateScorePrediction(flat_match)
+        first.calculateScorePrediction(prediction_match)
+
+        flat_score = score_dict[1, solver.JoinDirection.RIGHT, 2]
+        prediction_score = score_dict[1, solver.JoinDirection.RIGHT, 3]
+        self.assertLess(prediction_score, flat_score)
+        self.assertEqual(
+            prediction_score,
+            score_dict[3, solver.JoinDirection.LEFT, 1],
+        )
+        self.assertGreater(
+            solver.predictionEdgeDistance(
+                first.ownScoreEdges()[solver.JoinDirection.RIGHT],
+                flat_match.compareScoreEdges()[solver.JoinDirection.LEFT],
+            ),
+            solver.predictionEdgeDistance(
+                first.ownScoreEdges()[solver.JoinDirection.RIGHT],
+                prediction_match.compareScoreEdges()[solver.JoinDirection.LEFT],
+            ),
+        )
+
+    def test_mgc_prediction_scores_store_mgc_and_prediction_components(self):
+        score_dict = {}
+        first = self.make_segment(
+            np.arange(27).reshape((3, 3, 3)),
+            piece_number=1,
+            score_dict=score_dict,
+        )
+        second = self.make_segment(
+            np.arange(27, 54).reshape((3, 3, 3)),
+            piece_number=2,
+            score_dict=score_dict,
+        )
+
+        first.calculateScoreMGCPrediction(second)
+
+        right_score = score_dict[1, solver.JoinDirection.RIGHT, 2]
+        self.assertEqual(2, len(right_score))
+        self.assertTrue(np.isfinite(right_score[0]))
+        self.assertTrue(np.isfinite(right_score[1]))
+
     def test_combined_lab_scores_do_not_truncate_float_edges(self):
         score_dict = {}
         first = self.make_segment(
@@ -856,7 +1142,9 @@ class ScoreTests(unittest.TestCase):
                 solver.ScoreAlgorithm.EUCLIDEAN,
                 solver.ScoreAlgorithm.MAHALANOBIS,
                 solver.ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
-                solver.ScoreAlgorithm.MGC):
+                solver.ScoreAlgorithm.MGC,
+                solver.ScoreAlgorithm.PREDICTION,
+                solver.ScoreAlgorithm.MGC_PREDICTION):
             with self.subTest(score_algorithm=score_algorithm):
                 payloads = solver.buildScorePayloads(segments)
                 solver.initializeScoreWorker(payloads, score_algorithm)
@@ -1168,6 +1456,7 @@ class PostProcessTests(unittest.TestCase):
                         frame, row, col, candidate)
                     if math.isinf(score):
                         continue
+
                     item = (
                         -neighbor_count,
                         score,
@@ -1192,6 +1481,161 @@ class PostProcessTests(unittest.TestCase):
         return tuple(
             tuple(0 if cell == 0 else cell.piece_number for cell in row)
             for row in segment.pic_connection_matrix
+        )
+
+    def test_split_bad_join_components_cuts_high_score_internal_seam(self):
+        score_dict = defaultdict(lambda: math.inf)
+        first = self.make_segment(1, score_dict, max_size=3)
+        second = self.make_segment(2, score_dict, max_size=3)
+        third = self.make_segment(3, score_dict, max_size=3)
+        score_dict[1, solver.JoinDirection.RIGHT, 2] = 0.5
+        score_dict[2, solver.JoinDirection.LEFT, 1] = 0.5
+        score_dict[2, solver.JoinDirection.RIGHT, 3] = 2.0
+        score_dict[3, solver.JoinDirection.LEFT, 2] = 2.0
+        root = self.make_segment(4, score_dict, max_size=3)
+        root.pic_connection_matrix = np.asarray(
+            [[first, second, third]],
+            dtype=object,
+        )
+        root.binary_connection_matrix = (root.pic_connection_matrix != 0).astype(int)
+        segment_list = [root]
+
+        stats = solver.splitBadJoinComponents(segment_list, max_score=1.0)
+
+        self.assertEqual(1, stats["before"])
+        self.assertEqual(2, stats["after"])
+        self.assertEqual(1, stats["cut_edges"])
+        self.assertEqual(
+            [((1, 2),), ((3,),)],
+            [self.connection_layout(segment) for segment in segment_list],
+        )
+
+    def test_split_segment_by_consensus_cuts_unsupported_non_mutual_seam(self):
+        score_dict = defaultdict(lambda: math.inf)
+        first = self.make_segment(1, score_dict, max_size=3)
+        second = self.make_segment(2, score_dict, max_size=3)
+        third = self.make_segment(3, score_dict, max_size=3)
+        score_dict[1, solver.JoinDirection.RIGHT, 2] = 0.1
+        score_dict[2, solver.JoinDirection.LEFT, 1] = 0.1
+        score_dict[2, solver.JoinDirection.RIGHT, 1] = 0.1
+        score_dict[2, solver.JoinDirection.RIGHT, 3] = 0.2
+        score_dict[3, solver.JoinDirection.LEFT, 1] = 0.1
+        score_dict[3, solver.JoinDirection.LEFT, 2] = 0.2
+        root = self.make_segment(4, score_dict, max_size=3)
+        root.pic_connection_matrix = np.asarray(
+            [[first, second, third]],
+            dtype=object,
+        )
+        root.binary_connection_matrix = (root.pic_connection_matrix != 0).astype(int)
+
+        split_segments, cut_edges, _next_component_id = solver.splitSegmentByConsensus(
+            root,
+            top_k=1,
+            min_local_support=0,
+            next_component_id=10,
+        )
+
+        self.assertEqual(1, cut_edges)
+        self.assertEqual(
+            [((1, 2),), ((3,),)],
+            [self.connection_layout(segment) for segment in split_segments],
+        )
+        self.assertEqual((0, 0), split_segments[0]._consensus_origin)
+        self.assertEqual((0, 2), split_segments[1]._consensus_origin)
+
+    def test_place_repaired_components_in_frame_requires_boundary_contacts(self):
+        score_dict = defaultdict(lambda: math.inf)
+        first = self.make_segment(1, score_dict, max_size=3)
+        second = self.make_segment(2, score_dict, max_size=3)
+        third = self.make_segment(3, score_dict, max_size=3)
+        fourth = self.make_segment(4, score_dict, max_size=3)
+        score_dict[1, solver.JoinDirection.RIGHT, 3] = 0.5
+        score_dict[3, solver.JoinDirection.LEFT, 1] = 0.5
+        score_dict[2, solver.JoinDirection.RIGHT, 4] = 0.5
+        score_dict[4, solver.JoinDirection.LEFT, 2] = 0.5
+        root = self.make_segment(5, score_dict, max_size=3)
+        root.pic_connection_matrix = np.asarray(
+            [
+                [0, 0, 0],
+                [first, 0, 0],
+                [second, 0, 0],
+            ],
+            dtype=object,
+        )
+        root.binary_connection_matrix = (root.pic_connection_matrix != 0).astype(int)
+        component = self.make_segment(6, score_dict, max_size=3)
+        component.pic_connection_matrix = np.asarray(
+            [[third], [fourth]],
+            dtype=object,
+        )
+        component.binary_connection_matrix = (
+            component.pic_connection_matrix != 0
+        ).astype(int)
+        segment_list = [root, component]
+
+        stats = solver.placeRepairedComponentsInFrame(
+            segment_list,
+            min_neighbor_count=2,
+            max_score=1.0,
+        )
+
+        self.assertEqual(1, stats["placed_components"])
+        self.assertEqual(2, stats["placed_pieces"])
+        self.assertEqual(1, len(segment_list))
+        self.assertEqual(
+            (
+                (0, 0, 0),
+                (1, 3, 0),
+                (2, 4, 0),
+            ),
+            self.connection_layout(segment_list[0]),
+        )
+
+    def test_place_consensus_components_in_frame_strips_empty_root_border(self):
+        score_dict = defaultdict(lambda: math.inf)
+        first = self.make_segment(1, score_dict, max_size=3)
+        second = self.make_segment(2, score_dict, max_size=3)
+        third = self.make_segment(3, score_dict, max_size=3)
+        fourth = self.make_segment(4, score_dict, max_size=3)
+        score_dict[third.piece_number, solver.JoinDirection.DOWN, first.piece_number] = 0.5
+        score_dict[first.piece_number, solver.JoinDirection.UP, third.piece_number] = 0.5
+        score_dict[fourth.piece_number, solver.JoinDirection.DOWN, second.piece_number] = 0.5
+        score_dict[second.piece_number, solver.JoinDirection.UP, fourth.piece_number] = 0.5
+        root = self.make_segment(5, score_dict, max_size=3)
+        root.pic_connection_matrix = np.asarray(
+            [
+                [first, second, 0],
+                [0, 0, 0],
+                [0, 0, 0],
+            ],
+            dtype=object,
+        )
+        root.binary_connection_matrix = (root.pic_connection_matrix != 0).astype(int)
+        component = self.make_segment(6, score_dict, max_size=3)
+        component.pic_connection_matrix = np.asarray(
+            [[third, fourth]],
+            dtype=object,
+        )
+        component.binary_connection_matrix = (
+            component.pic_connection_matrix != 0
+        ).astype(int)
+        segment_list = [root, component]
+
+        stats = solver.placeConsensusComponentsInFrame(
+            segment_list,
+            min_neighbor_count=2,
+            max_score=1.0,
+        )
+
+        self.assertEqual(1, stats["placed_components"])
+        self.assertEqual(1, len(segment_list))
+        self.assertEqual(
+            (
+                (3, 4, 0),
+                (1, 2, 0),
+                (0, 0, 0),
+            ),
+            self.connection_layout(segment_list[0]),
         )
 
     def test_trim_to_best_frame_keeps_densest_known_puzzle_window(self):
@@ -1975,6 +2419,121 @@ class ConnectionTests(unittest.TestCase):
         self.assertIs(first.pic_connection_matrix[0, 1], second)
 
 
+class PrimAssemblyTests(unittest.TestCase):
+    def make_segments(self, count=6):
+        score_dict = solver.DenseScoreTable(count)
+        connections_dict = {}
+        segments = [
+            solver.Segment(
+                np.zeros((2, 2, 3)),
+                max_width=3,
+                max_height=3,
+                piece_number=piece_number,
+                component_id=piece_number,
+                score_dict=score_dict,
+                connections_dict=connections_dict,
+            )
+            for piece_number in range(1, count + 1)
+        ]
+        for own_piece in range(1, count + 1):
+            for join_piece in range(1, count + 1):
+                if own_piece == join_piece:
+                    continue
+                for direction in solver.JoinDirection:
+                    score_dict[own_piece, direction, join_piece] = 100.0
+        return segments, score_dict
+
+    def make_image_segments(self):
+        rng = np.random.default_rng(7)
+        image = rng.integers(0, 255, size=(9, 9, 3), dtype=np.uint8)
+        segments = solver.breakUpImage(
+            image,
+            length=3,
+            save_segments=False,
+            color_type=solver.ColorType.RGB,
+        )
+        solver.calculateScores(
+            segments,
+            solver.ScoreAlgorithm.EUCLIDEAN,
+            show_progress=False,
+            max_workers=1,
+            executor_type="serial",
+        )
+        return segments, len(segments)
+
+    def prim_history(self, use_queue):
+        segments, original_size = self.make_image_segments()
+        root = solver.findBestPrimSeedSegment(segments)
+        queue = None
+        if use_queue:
+            queue = solver.PrimConnectionPriorityQueue(root, segments)
+        history = []
+        while len(segments) > 1:
+            if queue is None:
+                connection = solver.findBestConnectionPrim(
+                    segments,
+                    root,
+                    solver.CompareWithOtherSegments.ONLY_BEST,
+                )
+            else:
+                connection = queue.popBestConnection(root, segments)
+            if connection.pic_connection_matrix is None:
+                break
+            history.append((
+                round(connection.score, 12),
+                connection.own_segment.piece_number,
+                connection.join_segment.piece_number,
+            ))
+            solver.joinPieces(connection, segments, original_size)
+            root = connection.own_segment
+            if queue is not None:
+                queue.addConnectionsForRoot(root, segments)
+        return history
+
+    def test_neighborhood_seed_prefers_several_good_edges(self):
+        segments, score_dict = self.make_segments()
+        score_dict[1, solver.JoinDirection.RIGHT, 2] = 0.01
+        score_dict[2, solver.JoinDirection.UP, 3] = 1.0
+        score_dict[2, solver.JoinDirection.DOWN, 4] = 1.0
+        score_dict[2, solver.JoinDirection.LEFT, 5] = 1.0
+        score_dict[2, solver.JoinDirection.RIGHT, 6] = 1.0
+
+        single_edge_seed = solver.findBestPrimSeedSegment(
+            segments,
+            neighborhood_size=1,
+        )
+        neighborhood_seed = solver.findBestPrimSeedSegment(
+            segments,
+            neighborhood_size=4,
+        )
+
+        self.assertEqual(1, single_edge_seed.piece_number)
+        self.assertEqual(2, neighborhood_seed.piece_number)
+
+    def test_vector_prim_estimates_match_scalar_estimates(self):
+        segments, _original_size = self.make_image_segments()
+        root = solver.findBestPrimSeedSegment(segments)
+        candidates = [
+            segment
+            for segment in segments
+            if segment is not root
+        ]
+
+        scalar_estimates = [
+            solver.primConnectionEstimate(root, candidate)
+            for candidate in candidates
+        ]
+        vector_estimates = solver.primConnectionEstimates(root, candidates)
+
+        self.assertEqual(scalar_estimates, vector_estimates)
+
+    def test_prim_priority_queue_matches_exhaustive_scan(self):
+        self.assertEqual(
+            self.prim_history(use_queue=False),
+            self.prim_history(use_queue=True),
+        )
+
+
 class KruskalAssemblyTests(unittest.TestCase):
     def make_segments(self):
         rng = np.random.default_rng(42)
@@ -2026,6 +2585,29 @@ class KruskalAssemblyTests(unittest.TestCase):
             tuple(0 if cell == 0 else cell.piece_number for cell in row)
             for row in segment.pic_connection_matrix
         )
+
+    def make_gallagher_pairwise_segments(self):
+        score_dict = solver.DenseScoreTable(4)
+        connections_dict = {}
+        segments = [
+            solver.Segment(
+                np.zeros((2, 2, 3)),
+                max_width=2,
+                max_height=2,
+                piece_number=piece_number,
+                component_id=piece_number,
+                score_dict=score_dict,
+                connections_dict=connections_dict,
+            )
+            for piece_number in range(1, 5)
+        ]
+        for own_piece in range(1, 5):
+            for join_piece in range(1, 5):
+                if own_piece == join_piece:
+                    continue
+                for direction in solver.JoinDirection:
+                    score_dict[own_piece, direction, join_piece] = 100.0
+        return segments, score_dict
 
     def legacy_kruskal_offsets(
             self,
@@ -2318,27 +2900,72 @@ class KruskalAssemblyTests(unittest.TestCase):
 
         self.assertEqual((1, 3, 5.0, 2), history[0])
 
-    def test_gallagher_pairwise_kruskal_assembles_from_piece_edges(self):
-        score_dict = solver.DenseScoreTable(4)
+    def test_multi_contact_only_does_not_fall_back_to_single_edge_join(self):
+        score_dict = defaultdict(lambda: math.inf)
         connections_dict = {}
         segments = [
             solver.Segment(
                 np.zeros((2, 2, 3)),
-                max_width=2,
-                max_height=2,
+                max_width=4,
+                max_height=4,
                 piece_number=piece_number,
                 component_id=piece_number,
                 score_dict=score_dict,
                 connections_dict=connections_dict,
             )
-            for piece_number in range(1, 5)
+            for piece_number in range(1, 6)
         ]
-        for own_piece in range(1, 5):
-            for join_piece in range(1, 5):
-                if own_piece == join_piece:
-                    continue
-                for direction in solver.JoinDirection:
-                    score_dict[own_piece, direction, join_piece] = 100.0
+        first, second, third, fourth, fifth = segments
+        first.pic_connection_matrix = np.asarray(
+            [[first], [second]],
+            dtype=object,
+        )
+        first.binary_connection_matrix = np.asarray([[1], [1]])
+        third.pic_connection_matrix = np.asarray(
+            [[third], [fourth]],
+            dtype=object,
+        )
+        third.binary_connection_matrix = np.asarray([[1], [1]])
+
+        score_dict[
+            first.piece_number,
+            solver.JoinDirection.RIGHT,
+            third.piece_number,
+        ] = 5.0
+        score_dict[
+            second.piece_number,
+            solver.JoinDirection.RIGHT,
+            fourth.piece_number,
+        ] = 5.0
+        score_dict[
+            first.piece_number,
+            solver.JoinDirection.LEFT,
+            fifth.piece_number,
+        ] = 1.0
+
+        multi_contact_segments = [first, third, fifth]
+        history = []
+
+        def record_join(best_connection, round_number):
+            history.append((
+                best_connection.own_segment.piece_number,
+                best_connection.join_segment.piece_number,
+                best_connection.score,
+                best_connection.contact_count,
+            ))
+
+        rounds = solver.assembleKruskalMultiContactOnly(
+            multi_contact_segments,
+            original_size=5,
+            on_join=record_join,
+        )
+
+        self.assertEqual(1, rounds)
+        self.assertEqual([(1, 3, 5.0, 2)], history)
+        self.assertEqual(2, len(multi_contact_segments))
+
+    def test_gallagher_pairwise_kruskal_assembles_from_piece_edges(self):
+        segments, score_dict = self.make_gallagher_pairwise_segments()
         score_dict[1, solver.JoinDirection.RIGHT, 2] = 1.0
         score_dict[2, solver.JoinDirection.LEFT, 1] = 1.0
         score_dict[1, solver.JoinDirection.DOWN, 3] = 1.0
@@ -2359,6 +2986,90 @@ class KruskalAssemblyTests(unittest.TestCase):
         self.assertEqual(1, len(segments))
         self.assertEqual(
             ((1, 2), (3, 4)),
+            self.segment_layout(segments[0]),
+        )
+
+    def test_gallagher_pairwise_kruskal_respects_max_score(self):
+        segments, score_dict = self.make_gallagher_pairwise_segments()
+        score_dict[1, solver.JoinDirection.RIGHT, 2] = 1.0
+        score_dict[2, solver.JoinDirection.LEFT, 1] = 1.0
+
+        rounds = solver.assembleGallagherPairwiseKruskal(
+            segments,
+            original_size=4,
+            top_candidates_per_edge=1,
+            mutual_edges_only=True,
+            max_score=0.5,
+        )
+
+        self.assertEqual(0, rounds)
+        self.assertEqual(4, len(segments))
+
+    def test_growing_consensus_candidates_propose_missing_loop_edge(self):
+        segments, score_dict = self.make_gallagher_pairwise_segments()
+        score_dict[1, solver.JoinDirection.RIGHT, 2] = 0.1
+        score_dict[2, solver.JoinDirection.LEFT, 1] = 0.1
+        score_dict[1, solver.JoinDirection.DOWN, 3] = 0.1
+        score_dict[3, solver.JoinDirection.UP, 1] = 0.1
+        score_dict[2, solver.JoinDirection.DOWN, 4] = 0.1
+        score_dict[4, solver.JoinDirection.UP, 2] = 0.1
+        score_dict[3, solver.JoinDirection.RIGHT, 2] = 0.05
+        score_dict[2, solver.JoinDirection.LEFT, 3] = 0.05
+        score_dict[3, solver.JoinDirection.RIGHT, 4] = 5.0
+        score_dict[4, solver.JoinDirection.LEFT, 3] = 5.0
+
+        edges = solver.growingConsensusCandidateEdges(
+            segments,
+            top_candidates_per_edge=1,
+            min_support=1,
+            propose_missing=True,
+        )
+        edge_keys = {
+            (own_piece, direction, join_piece)
+            for (
+                _primary,
+                _secondary,
+                _counter,
+                _support,
+                _score,
+                own_piece,
+                direction,
+                join_piece,
+            )
+            in edges
+        }
+
+        self.assertIn(
+            (3, solver.JoinDirection.RIGHT, 4),
+            edge_keys,
+        )
+
+    def test_growing_consensus_kruskal_assembles_supported_loop(self):
+        segments, score_dict = self.make_gallagher_pairwise_segments()
+        score_dict[1, solver.JoinDirection.RIGHT, 2] = 0.1
+        score_dict[2, solver.JoinDirection.LEFT, 1] = 0.1
+        score_dict[1, solver.JoinDirection.DOWN, 3] = 0.1
+        score_dict[3, solver.JoinDirection.UP, 1] = 0.1
+        score_dict[2, solver.JoinDirection.DOWN, 4] = 0.1
+        score_dict[4, solver.JoinDirection.UP, 2] = 0.1
+        score_dict[3, solver.JoinDirection.RIGHT, 4] = 5.0
+        score_dict[4, solver.JoinDirection.LEFT, 3] = 5.0
+
+        rounds = solver.assembleGrowingConsensusKruskal(
+            segments,
+            original_size=4,
+            top_candidates_per_edge=1,
+            min_support=1,
+            propose_missing=True,
+        )
+
+        self.assertEqual(3, rounds)
+        self.assertEqual(1, len(segments))
+        self.assertEqual(
+            (
+                (1, 2),
+                (3, 4),
+            ),
             self.segment_layout(segments[0]),
         )
 
@@ -2569,21 +3280,24 @@ class KruskalAssemblyTests(unittest.TestCase):
 
 
 class EvaluationTests(unittest.TestCase):
-    def test_paper_style_report_scores_solved_grid(self):
+    def make_segments(self, max_size=2):
         score_dict = {}
         connections_dict = {}
-        pieces = [
+        return [
             solver.Segment(
                 np.full((2, 2, 3), piece_number, dtype=np.uint8),
-                max_width=2,
-                max_height=2,
+                max_width=max_size,
+                max_height=max_size,
                 piece_number=piece_number,
                 component_id=piece_number,
                 score_dict=score_dict,
                 connections_dict=connections_dict,
             )
-            for piece_number in range(1, 5)
-        ]
+            for piece_number in range(1, max_size * max_size + 1)
+        ], score_dict
+
+    def test_paper_style_report_scores_solved_grid(self):
+        pieces, _score_dict = self.make_segments()
         root = pieces[0]
         root.pic_connection_matrix = np.asarray(
             [
@@ -2606,6 +3320,35 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(4, report["neighbor"]["largest_correct_component"])
         self.assertEqual(4, report["direct"]["direct"])
         self.assertEqual(1.0, report["direct"]["accuracy"])
+
+    def test_error_diagnostic_report_lists_false_seams(self):
+        pieces, score_dict = self.make_segments()
+        for own_piece in range(1, 5):
+            for join_piece in range(1, 5):
+                if own_piece == join_piece:
+                    continue
+                for direction in solver.JoinDirection:
+                    score_dict[own_piece, direction, join_piece] = 10.0
+        score_dict[1, solver.JoinDirection.RIGHT, 3] = 0.2
+        root = pieces[0]
+        root.pic_connection_matrix = np.asarray(
+            [
+                [pieces[0], pieces[2]],
+                [pieces[1], pieces[3]],
+            ],
+            dtype=object,
+        )
+        root.binary_connection_matrix = np.asarray([[1, 1], [1, 1]])
+
+        report = solver.errorDiagnosticReport([root], limit=2)
+        formatted = solver.formatErrorDiagnosticReport(report)
+
+        self.assertEqual(2, len(report["false_seams"]))
+        self.assertEqual(1, report["false_seams"][0]["piece"])
+        self.assertEqual(3, report["false_seams"][0]["neighbor"])
+        self.assertEqual((1, 0), report["false_seams"][0]["true_delta"])
+        self.assertIn("lowest-score false seams", formatted)
+        self.assertIn("1->3", formatted)
 
 
 if __name__ == "__main__":

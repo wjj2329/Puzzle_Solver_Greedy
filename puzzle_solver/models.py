@@ -11,6 +11,7 @@ from .distances import (
     mahalanobisEdgeDistance,
     mgcEdgeDistance,
     mgcEdgeMahalanobisDistance,
+    predictionEdgeDistance,
 )
 from .enums import CompareWithOtherSegments, JOIN_EDGE_PAIRS, JoinDirection
 from .score_helpers import reciprocalScoreEntries
@@ -265,6 +266,46 @@ class Segment:
             ],
         )
 
+    def scoreEntriesPrediction(self, segment):
+        own_edges = self.ownScoreEdges()
+        compare_edges = segment.compareScoreEdges()
+        return self.reciprocalScoreEntries(
+            segment,
+            [
+                (
+                    own_direction,
+                    predictionEdgeDistance(
+                        own_edges[own_direction],
+                        compare_edges[compare_direction],
+                    ),
+                )
+                for own_direction, compare_direction in JOIN_EDGE_PAIRS
+            ],
+        )
+
+    def scoreEntriesMGCPrediction(self, segment):
+        own_edges = self.ownScoreEdges()
+        compare_edges = segment.compareScoreEdges()
+        return self.reciprocalScoreEntries(
+            segment,
+            [
+                (
+                    own_direction,
+                    (
+                        mgcEdgeMahalanobisDistance(
+                            own_edges[own_direction],
+                            compare_edges[compare_direction],
+                        ),
+                        predictionEdgeDistance(
+                            own_edges[own_direction],
+                            compare_edges[compare_direction],
+                        ),
+                    ),
+                )
+                for own_direction, compare_direction in JOIN_EDGE_PAIRS
+            ],
+        )
+
     def applyScoreEntries(self, entries):
         for key, score in entries:
             self.score_dict[key] = score
@@ -292,6 +333,12 @@ class Segment:
 
     def calculateScoreMGCDistance(self, segment):
         self.applyScoreEntries(self.scoreEntriesMGCDistance(segment))
+
+    def calculateScorePrediction(self, segment):
+        self.applyScoreEntries(self.scoreEntriesPrediction(segment))
+
+    def calculateScoreMGCPrediction(self, segment):
+        self.applyScoreEntries(self.scoreEntriesMGCPrediction(segment))
 
     def checkCompatibility(self, booleanarray, max_height, max_width):
         non_zero_values = nonzero(booleanarray)

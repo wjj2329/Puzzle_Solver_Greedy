@@ -34,6 +34,8 @@ class ScoreAlgorithm(Enum):
     EUCLIDEAN_AND_MAHALANOBIS = 4
     MGC = 5
     MGC_DISTANCE = 6
+    PREDICTION = 7
+    MGC_PREDICTION = 8
 
 
 class ScoreMode(Enum):

@@ -1,8 +1,11 @@
 from .assembly import (
     KruskalConnectionPriorityQueue,
+    PrimConnectionPriorityQueue,
     assembleGallagherPairwiseKruskal,
+    assembleGrowingConsensusKruskal,
     assembleKruskalBeamSearch,
     assembleKruskalHybridBeamSearch,
+    assembleKruskalMultiContactOnly,
     assembleKruskalStaged,
     assembleKruskalWithPriorityQueue,
     calculateSinglePieceConnection,
@@ -11,9 +14,14 @@ from .assembly import (
     findBestBuddyConnection,
     findBestConnectionKruskal,
     findBestConnectionPrim,
+    findBestPrimSeedSegment,
     findBestRootSegment,
     findTopConnectionsKruskal,
+    growingConsensusCandidateEdges,
     joinPieces,
+    primConnectionEstimate,
+    primConnectionEstimates,
+    primNeighborhoodSeedScore,
 )
 from .cli import buildArgumentParser, parseArguments
 from .distances import (
@@ -23,6 +31,8 @@ from .distances import (
     mgcDirectionalDistance,
     mgcEdgeDistance,
     mgcEdgeMahalanobisDistance,
+    predictionDistance,
+    predictionEdgeDistance,
 )
 from .enums import (
     JOIN_EDGE_PAIRS,
@@ -37,6 +47,8 @@ from .enums import (
 from .evaluation import (
     assemblyQuality,
     directPlacementQuality,
+    errorDiagnosticReport,
+    formatErrorDiagnosticReport,
     formatPaperStyleReport,
     paperStyleReport,
     trueNeighborRankStats,
@@ -51,6 +63,13 @@ from .postprocess import (
     fillHoles,
     fillScore,
     iterPieces,
+    placeConsensusComponentsInFrame,
+    placeRepairedComponentsInFrame,
+    repairConsensusShifts,
+    seamRepairScore,
+    splitBadJoinComponents,
+    splitSegmentByConsensus,
+    splitSegmentByBadJoins,
     trimAndFillAssembly,
     trimToBestFrame,
 )

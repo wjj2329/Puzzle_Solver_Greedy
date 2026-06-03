@@ -8,21 +8,36 @@ from skimage import color
 
 from .assembly import (
     KruskalConnectionPriorityQueue,
+    PrimConnectionPriorityQueue,
     assembleGallagherPairwiseKruskal,
+    assembleGrowingConsensusKruskal,
     assembleKruskalBeamSearch,
     assembleKruskalHybridBeamSearch,
+    assembleKruskalMultiContactOnly,
     assembleKruskalStaged,
     connectBestBudsFirst,
     findBestConnectionKruskal,
     findBestConnectionPrim,
-    findBestRootSegment,
+    findBestPrimSeedSegment,
     joinPieces,
 )
 from .cli import parseArguments
 from .enums import AssemblyType, ColorType, ScoreMode
-from .evaluation import formatPaperStyleReport, paperStyleReport
+from .evaluation import (
+    errorDiagnosticReport,
+    formatErrorDiagnosticReport,
+    formatPaperStyleReport,
+    paperStyleReport,
+)
 from .image_io import saveImage
-from .postprocess import connectEndgameComponents, trimAndFillAssembly
+from .postprocess import (
+    connectEndgameComponents,
+    placeConsensusComponentsInFrame,
+    placeRepairedComponentsInFrame,
+    repairConsensusShifts,
+    splitBadJoinComponents,
+    trimAndFillAssembly,
+)
 from .scoring import (
     applySymmetricCompatibilityScores,
     calculateScores,
@@ -133,7 +148,28 @@ def main(argv=None):
         connectBestBudsFirst(segment_list, original_size, args.show_progress)
         printTiming("Best-buddy setup", phase_started, args.show_progress)
     if args.assembly_type == AssemblyType.PRIM:
-        root = findBestRootSegment(segment_list)
+        root = findBestPrimSeedSegment(
+            segment_list,
+            strategy=args.prim_seed_strategy,
+            neighborhood_size=args.prim_seed_neighbors,
+        )
+        if args.show_progress and root is not None:
+            print(
+                "Prim seed",
+                root.piece_number,
+                "strategy",
+                args.prim_seed_strategy,
+            )
+    prim_queue = None
+    if (
+            args.assembly_type == AssemblyType.PRIM
+            and args.use_prim_priority_queue
+            and root is not None):
+        prim_queue = PrimConnectionPriorityQueue(
+            root,
+            segment_list,
+            args.compare_type,
+        )
     kruskal_queue = None
     if (
             args.assembly_type == AssemblyType.KRUSKAL
@@ -150,7 +186,12 @@ def main(argv=None):
         )
         printTiming("Kruskal queue build", phase_started, args.show_progress)
     assembly_started = time.perf_counter()
-    if args.assembly_type == AssemblyType.KRUSKAL and args.gallagher_pairwise_kruskal:
+    if (
+            args.assembly_type == AssemblyType.KRUSKAL
+            and (
+                args.gallagher_pairwise_kruskal
+                or args.growing_consensus_kruskal
+            )):
         def saveGallagherJoin(best_connection, join_round):
             if not args.save_assembly:
                 return
@@ -169,13 +210,206 @@ def main(argv=None):
                 w.pack(side="bottom", fill="both", expand="no")
                 window.update()
 
-        round_number = assembleGallagherPairwiseKruskal(
-            segment_list,
-            original_size,
-            top_candidates_per_edge=args.gallagher_edge_candidates,
-            mutual_edges_only=args.gallagher_mutual_edges,
-            on_join=saveGallagherJoin if args.save_assembly else None,
-        )
+        if args.growing_consensus_kruskal:
+            round_number = assembleGrowingConsensusKruskal(
+                segment_list,
+                original_size,
+                top_candidates_per_edge=(
+                    args.growing_consensus_edge_candidates
+                ),
+                min_support=args.growing_consensus_min_support,
+                propose_missing=args.growing_consensus_propose_missing,
+                max_edges=(
+                    None
+                    if args.growing_consensus_max_edges == 0
+                    else args.growing_consensus_max_edges
+                ),
+                priority=args.growing_consensus_priority,
+                fallback_pairwise=args.growing_consensus_fallback_pairwise,
+                on_join=saveGallagherJoin if args.save_assembly else None,
+            )
+        else:
+            round_number = assembleGallagherPairwiseKruskal(
+                segment_list,
+                original_size,
+                top_candidates_per_edge=args.gallagher_edge_candidates,
+                mutual_edges_only=args.gallagher_mutual_edges,
+                on_join=saveGallagherJoin if args.save_assembly else None,
+            )
+        if args.repair_bad_joins:
+            remerge_score_limit = args.repair_remerge_score_limit
+            if remerge_score_limit is None:
+                remerge_score_limit = args.repair_bad_join_score_limit
+            for repair_iteration in range(args.repair_iterations):
+                phase_started = time.perf_counter()
+                repair_stats = splitBadJoinComponents(
+                    segment_list,
+                    args.repair_bad_join_score_limit,
+                )
+                printTiming(
+                    f"Bad-join split {repair_iteration + 1}",
+                    phase_started,
+                    args.show_progress,
+                )
+                if args.show_progress:
+                    print(
+                        "repair split",
+                        repair_iteration + 1,
+                        "components",
+                        repair_stats["before"],
+                        "->",
+                        repair_stats["after"],
+                        "cut edges",
+                        repair_stats["cut_edges"],
+                    )
+                if repair_stats["after"] <= repair_stats["before"]:
+                    break
+
+                phase_started = time.perf_counter()
+                if args.repair_remerge_strategy == "multi-contact":
+                    repaired_rounds = assembleKruskalMultiContactOnly(
+                        segment_list,
+                        original_size,
+                        compare_type=args.compare_type,
+                        compare_mode=args.compare_type,
+                        max_score=remerge_score_limit,
+                        on_join=saveGallagherJoin if args.save_assembly else None,
+                    )
+                else:
+                    repaired_rounds = assembleGallagherPairwiseKruskal(
+                        segment_list,
+                        original_size,
+                        top_candidates_per_edge=args.gallagher_edge_candidates,
+                        mutual_edges_only=args.gallagher_mutual_edges,
+                        max_score=remerge_score_limit,
+                        on_join=saveGallagherJoin if args.save_assembly else None,
+                    )
+                round_number += repaired_rounds
+                printTiming(
+                    f"Bad-join remerge {repair_iteration + 1}",
+                    phase_started,
+                    args.show_progress,
+                )
+                placement_stats = None
+                if args.repair_frame_placement:
+                    phase_started = time.perf_counter()
+                    placement_stats = placeRepairedComponentsInFrame(
+                        segment_list,
+                        min_neighbor_count=(
+                            args.repair_frame_placement_min_contacts
+                        ),
+                        max_score=remerge_score_limit,
+                    )
+                    printTiming(
+                        f"Repair frame placement {repair_iteration + 1}",
+                        phase_started,
+                        args.show_progress,
+                    )
+                    if args.show_progress:
+                        print(
+                            "repair frame placement",
+                            repair_iteration + 1,
+                            "components",
+                            placement_stats["before"],
+                            "->",
+                            placement_stats["after"],
+                            "placed",
+                            placement_stats["placed_components"],
+                            "components",
+                            placement_stats["placed_pieces"],
+                            "pieces",
+                        )
+                if (
+                        repaired_rounds == 0
+                        and (
+                            placement_stats is None
+                            or placement_stats["placed_components"] == 0
+                        )):
+                    break
+        if args.repair_consensus_shifts:
+            remerge_score_limit = args.repair_remerge_score_limit
+            if remerge_score_limit is None and args.repair_bad_joins:
+                remerge_score_limit = args.repair_bad_join_score_limit
+            phase_started = time.perf_counter()
+            consensus_stats = repairConsensusShifts(
+                segment_list,
+                top_k=args.repair_consensus_top_k,
+                min_local_support=args.repair_consensus_min_local_support,
+                min_neighbor_count=args.repair_consensus_min_contacts,
+                max_shift=args.repair_consensus_max_shift,
+                max_score=remerge_score_limit,
+            )
+            printTiming(
+                "Consensus shift repair",
+                phase_started,
+                args.show_progress,
+            )
+            if args.show_progress:
+                print(
+                    "consensus shift repair",
+                    "components",
+                    consensus_stats["before"],
+                    "->",
+                    consensus_stats["after"],
+                    "cut edges",
+                    consensus_stats["cut_edges"],
+                    "placed",
+                    consensus_stats["placed_components"],
+                    "components",
+                    consensus_stats["placed_pieces"],
+                    "pieces",
+                )
+            if args.repair_consensus_remerge and len(segment_list) > 1:
+                phase_started = time.perf_counter()
+                consensus_remerge_rounds = assembleKruskalMultiContactOnly(
+                    segment_list,
+                    original_size,
+                    compare_type=args.compare_type,
+                    compare_mode=args.compare_type,
+                    max_score=remerge_score_limit,
+                    on_join=saveGallagherJoin if args.save_assembly else None,
+                )
+                round_number += consensus_remerge_rounds
+                printTiming(
+                    "Consensus multi-contact remerge",
+                    phase_started,
+                    args.show_progress,
+                )
+                if args.show_progress:
+                    print(
+                        "consensus multi-contact remerge",
+                        "rounds",
+                        consensus_remerge_rounds,
+                        "components now",
+                        len(segment_list),
+                    )
+            if args.repair_consensus_frame_placement and len(segment_list) > 1:
+                phase_started = time.perf_counter()
+                consensus_frame_stats = placeConsensusComponentsInFrame(
+                    segment_list,
+                    min_neighbor_count=(
+                        args.repair_consensus_frame_min_contacts
+                    ),
+                    max_score=remerge_score_limit,
+                )
+                printTiming(
+                    "Consensus frame placement",
+                    phase_started,
+                    args.show_progress,
+                )
+                if args.show_progress:
+                    print(
+                        "consensus frame placement",
+                        "components",
+                        consensus_frame_stats["before"],
+                        "->",
+                        consensus_frame_stats["after"],
+                        "placed",
+                        consensus_frame_stats["placed_components"],
+                        "components",
+                        consensus_frame_stats["placed_pieces"],
+                        "pieces",
+                    )
         if segment_list:
             root = segment_list[0]
     elif args.assembly_type == AssemblyType.KRUSKAL and args.beam_width > 1:
@@ -273,8 +507,14 @@ def main(argv=None):
             else:
                 best_connection = kruskal_queue.popBestConnection(segment_list)
         if args.assembly_type == AssemblyType.PRIM:
-            best_connection = findBestConnectionPrim(
-                segment_list, root, args.compare_type)
+            if prim_queue is None:
+                best_connection = findBestConnectionPrim(
+                    segment_list, root, args.compare_type)
+            else:
+                best_connection = prim_queue.popBestConnection(
+                    root,
+                    segment_list,
+                )
         if best_connection is None or best_connection.pic_connection_matrix is None:
             break
         joinPieces(best_connection, segment_list, original_size)
@@ -284,6 +524,8 @@ def main(argv=None):
                 segment_list,
             )
         root = best_connection.own_segment
+        if prim_queue is not None:
+            prim_queue.addConnectionsForRoot(root, segment_list)
         if args.save_assembly:
             image_name = saveImage(
                 best_connection,
@@ -359,3 +601,9 @@ def main(argv=None):
             include_rank_stats=args.rank_report,
         )
         print(formatPaperStyleReport(report))
+    if args.diagnostic_report:
+        report = errorDiagnosticReport(
+            segment_list,
+            limit=args.diagnostic_limit,
+        )
+        print(formatErrorDiagnosticReport(report))

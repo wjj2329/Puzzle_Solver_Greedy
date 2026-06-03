@@ -7,6 +7,7 @@ from .distances import (
     euclideanDistances,
     mahalanobisEdgeDistances,
     mgcEdgeDistances,
+    predictionEdgeDistances,
 )
 from .enums import ScoreAlgorithm, ScoreMode
 from .enums import OPPOSITE_DIRECTIONS
@@ -87,6 +88,10 @@ def buildEdgeArrayCache(score_payloads, edge_attribute):
         ]
         edge_cache[direction] = {
             "edge": np.asarray([edge.edge for edge in edges], dtype=np.float64),
+            "adjacent_edge": np.asarray(
+                [edge.adjacent_edge for edge in edges],
+                dtype=np.float64,
+            ),
             "average_delta": np.asarray(
                 [edge.average_delta for edge in edges],
                 dtype=np.float64,
@@ -234,6 +239,33 @@ def scoreComponentsForDirection(
                 sqrt=score_algorithm == ScoreAlgorithm.MGC_DISTANCE,
             ),
         )
+    if score_algorithm == ScoreAlgorithm.PREDICTION:
+        return (
+            predictionEdgeDistances(
+                own_edges["edge"][index],
+                own_edges["adjacent_edge"][index],
+                compare_edges["edge"][remaining_start:],
+                compare_edges["adjacent_edge"][remaining_start:],
+            ),
+        )
+    if score_algorithm == ScoreAlgorithm.MGC_PREDICTION:
+        return (
+            mgcEdgeDistances(
+                own_edges["edge"][index],
+                own_edges["gradient_average"][index],
+                own_edges["gradient_inverse_covariance"][index],
+                compare_edges["edge"][remaining_start:],
+                compare_edges["gradient_average"][remaining_start:],
+                compare_edges["gradient_inverse_covariance"][remaining_start:],
+                sqrt=True,
+            ),
+            predictionEdgeDistances(
+                own_edges["edge"][index],
+                own_edges["adjacent_edge"][index],
+                compare_edges["edge"][remaining_start:],
+                compare_edges["adjacent_edge"][remaining_start:],
+            ),
+        )
     return ()
 
 
@@ -288,6 +320,10 @@ def scoreEntriesForPair(segment1, segment2, score_algorithm):
         return segment1.scoreEntriesMGC(segment2)
     elif score_algorithm == ScoreAlgorithm.MGC_DISTANCE:
         return segment1.scoreEntriesMGCDistance(segment2)
+    elif score_algorithm == ScoreAlgorithm.PREDICTION:
+        return segment1.scoreEntriesPrediction(segment2)
+    elif score_algorithm == ScoreAlgorithm.MGC_PREDICTION:
+        return segment1.scoreEntriesMGCPrediction(segment2)
     return None
 
 
@@ -313,6 +349,10 @@ def calculateScoresSerial(segment_list, score_algorithm, show_progress=True):
                 segment1.calculateScoreMGC(segment2)
             elif score_algorithm == ScoreAlgorithm.MGC_DISTANCE:
                 segment1.calculateScoreMGCDistance(segment2)
+            elif score_algorithm == ScoreAlgorithm.PREDICTION:
+                segment1.calculateScorePrediction(segment2)
+            elif score_algorithm == ScoreAlgorithm.MGC_PREDICTION:
+                segment1.calculateScoreMGCPrediction(segment2)
 
 
 def precomputeScoreEdges(segment_list):
@@ -513,7 +553,9 @@ def applySymmetricCompatibilityScores(segment_list):
 
 
 def normalizeScores(segment_list, score_algorithm):
-    if score_algorithm == ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS:
+    if score_algorithm in (
+            ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
+            ScoreAlgorithm.MGC_PREDICTION):
         score_dict = scoreDict(segment_list)
         if hasattr(score_dict, "normalizeCombinedScores"):
             score_dict.normalizeCombinedScores()

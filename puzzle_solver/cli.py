@@ -122,6 +122,21 @@ def buildArgumentParser():
         help="Include true-neighbor top-1/top-2/top-5 score ranks in the quality report.",
     )
     parser.add_argument(
+        "--diagnostic-report",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Print error diagnostics: largest correct islands, direct-placement "
+            "mismatches, and low-score false seams."
+        ),
+    )
+    parser.add_argument(
+        "--diagnostic-limit",
+        type=int,
+        default=12,
+        help="Maximum false seams shown by --diagnostic-report.",
+    )
+    parser.add_argument(
         "--gallagher-pairwise-kruskal",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -143,11 +158,203 @@ def buildArgumentParser():
         help="Queue only reciprocal best edges in Gallagher pairwise Kruskal.",
     )
     parser.add_argument(
+        "--growing-consensus-kruskal",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Use Son-style 2x2 loop consensus edges for Kruskal assembly "
+            "instead of raw pairwise Gallagher edges."
+        ),
+    )
+    parser.add_argument(
+        "--growing-consensus-edge-candidates",
+        type=int,
+        default=10,
+        help="Top candidate pieces per piece side used to build consensus loops.",
+    )
+    parser.add_argument(
+        "--growing-consensus-min-support",
+        type=int,
+        default=1,
+        help="Minimum 2x2 consensus-loop support required for an assembly edge.",
+    )
+    parser.add_argument(
+        "--growing-consensus-max-edges",
+        type=int,
+        default=25000,
+        help=(
+            "Maximum consensus-supported edges queued for assembly. Use 0 for "
+            "no cap."
+        ),
+    )
+    parser.add_argument(
+        "--growing-consensus-priority",
+        choices=("score", "support"),
+        default="score",
+        help=(
+            "How consensus edges are ordered after meeting the support "
+            "threshold."
+        ),
+    )
+    parser.add_argument(
+        "--growing-consensus-propose-missing",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Use three edges of an incomplete 2x2 loop to propose the missing "
+            "fourth edge."
+        ),
+    )
+    parser.add_argument(
+        "--growing-consensus-fallback-pairwise",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "After consensus-supported joins are exhausted, continue with "
+            "ordinary pairwise Gallagher Kruskal edges."
+        ),
+    )
+    parser.add_argument(
+        "--repair-bad-joins",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "After pairwise Gallagher assembly, split internal seams above "
+            "a score limit and re-merge the resulting components."
+        ),
+    )
+    parser.add_argument(
+        "--repair-bad-join-score-limit",
+        type=float,
+        default=1.0,
+        help="Maximum internal seam score retained by --repair-bad-joins.",
+    )
+    parser.add_argument(
+        "--repair-remerge-score-limit",
+        type=float,
+        default=None,
+        help=(
+            "Maximum pairwise edge score allowed when re-merging repaired "
+            "components. Omit to reuse --repair-bad-join-score-limit."
+        ),
+    )
+    parser.add_argument(
+        "--repair-remerge-strategy",
+        choices=("multi-contact", "pairwise"),
+        default="multi-contact",
+        help=(
+            "How repaired fragments are re-merged. 'multi-contact' only "
+            "accepts component joins with multiple touching seams; 'pairwise' "
+            "reuses Gallagher edge-ordered one-seam remerge."
+        ),
+    )
+    parser.add_argument(
+        "--repair-iterations",
+        type=int,
+        default=1,
+        help="Number of split/re-merge repair passes.",
+    )
+    parser.add_argument(
+        "--repair-frame-placement",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "After repair remerge, place remaining fragments into the final "
+            "frame using boundary-contact scoring."
+        ),
+    )
+    parser.add_argument(
+        "--repair-frame-placement-min-contacts",
+        type=int,
+        default=2,
+        help="Minimum boundary contacts required for repair frame placement.",
+    )
+    parser.add_argument(
+        "--repair-consensus-shifts",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Split low-consensus seams and try small whole-component shifts "
+            "accepted by multi-contact boundary agreement."
+        ),
+    )
+    parser.add_argument(
+        "--repair-consensus-top-k",
+        type=int,
+        default=8,
+        help="Top candidate rank used when deciding whether a seam has mutual support.",
+    )
+    parser.add_argument(
+        "--repair-consensus-min-local-support",
+        type=int,
+        default=1,
+        help="Minimum neighboring mutual-top-K 2x2 loop support that can preserve a seam.",
+    )
+    parser.add_argument(
+        "--repair-consensus-min-contacts",
+        type=int,
+        default=6,
+        help="Minimum boundary contacts required to accept a shifted component.",
+    )
+    parser.add_argument(
+        "--repair-consensus-max-shift",
+        type=int,
+        default=1,
+        help="Maximum row/column translation tested for each consensus component.",
+    )
+    parser.add_argument(
+        "--repair-consensus-remerge",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "After consensus shift repair, re-merge remaining fragments using "
+            "multi-contact Kruskal joins."
+        ),
+    )
+    parser.add_argument(
+        "--repair-consensus-frame-placement",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "After consensus remerge, strip empty borders and place remaining "
+            "fragments into the final puzzle frame."
+        ),
+    )
+    parser.add_argument(
+        "--repair-consensus-frame-min-contacts",
+        type=int,
+        default=3,
+        help="Minimum boundary contacts required for consensus frame placement.",
+    )
+    parser.add_argument(
         "--best-buddy",
         dest="connect_best_buddy_first",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Run the mutual best-buddy pre-assembly pass before Kruskal or Prim.",
+    )
+    parser.add_argument(
+        "--prim-seed-strategy",
+        choices=("neighborhood", "random"),
+        default="neighborhood",
+        help=(
+            "How Prim chooses its initial root. 'neighborhood' prefers a "
+            "piece/component with several strong outgoing edges; 'random' "
+            "preserves the legacy behavior."
+        ),
+    )
+    parser.add_argument(
+        "--prim-seed-neighbors",
+        type=int,
+        default=4,
+        help="Outgoing edge count averaged by the Prim neighborhood seed.",
+    )
+    parser.add_argument(
+        "--prim-priority-queue",
+        dest="use_prim_priority_queue",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use a frontier priority queue for Prim assembly.",
     )
     parser.add_argument(
         "--kruskal-priority-queue",
@@ -374,6 +581,66 @@ def parseArguments(argv=None):
         raise SystemExit("--score-workers must be greater than 0")
     if args.gallagher_edge_candidates <= 0:
         raise SystemExit("--gallagher-edge-candidates must be greater than 0")
+    if args.growing_consensus_edge_candidates <= 0:
+        raise SystemExit(
+            "--growing-consensus-edge-candidates must be greater than 0")
+    if args.growing_consensus_min_support <= 0:
+        raise SystemExit(
+            "--growing-consensus-min-support must be greater than 0")
+    if args.growing_consensus_max_edges < 0:
+        raise SystemExit("--growing-consensus-max-edges must be non-negative")
+    if args.diagnostic_limit <= 0:
+        raise SystemExit("--diagnostic-limit must be greater than 0")
+    if args.repair_bad_join_score_limit < 0:
+        raise SystemExit("--repair-bad-join-score-limit must be non-negative")
+    if (
+            args.repair_remerge_score_limit is not None
+            and args.repair_remerge_score_limit < 0):
+        raise SystemExit("--repair-remerge-score-limit must be non-negative")
+    if args.repair_iterations <= 0:
+        raise SystemExit("--repair-iterations must be greater than 0")
+    if args.repair_frame_placement_min_contacts <= 0:
+        raise SystemExit(
+            "--repair-frame-placement-min-contacts must be greater than 0")
+    if args.repair_consensus_top_k <= 0:
+        raise SystemExit("--repair-consensus-top-k must be greater than 0")
+    if args.repair_consensus_min_local_support < 0:
+        raise SystemExit(
+            "--repair-consensus-min-local-support must be non-negative")
+    if args.repair_consensus_min_contacts <= 0:
+        raise SystemExit("--repair-consensus-min-contacts must be greater than 0")
+    if args.repair_consensus_max_shift < 0:
+        raise SystemExit("--repair-consensus-max-shift must be non-negative")
+    if args.repair_consensus_frame_min_contacts <= 0:
+        raise SystemExit(
+            "--repair-consensus-frame-min-contacts must be greater than 0")
+    if (
+            args.repair_bad_joins
+            and (
+                args.assembly_type != AssemblyType.KRUSKAL
+                or not args.gallagher_pairwise_kruskal
+            )):
+        raise SystemExit(
+            "--repair-bad-joins is only supported with Gallagher pairwise Kruskal")
+    if (
+            args.repair_consensus_shifts
+            and (
+                args.assembly_type != AssemblyType.KRUSKAL
+                or not (
+                    args.gallagher_pairwise_kruskal
+                    or args.growing_consensus_kruskal
+                )
+            )):
+        raise SystemExit(
+            "--repair-consensus-shifts is only supported with "
+            "Gallagher pairwise or growing-consensus Kruskal")
+    if (
+            args.growing_consensus_kruskal
+            and args.assembly_type != AssemblyType.KRUSKAL):
+        raise SystemExit(
+            "--growing-consensus-kruskal is only supported with Kruskal assembly")
+    if args.prim_seed_neighbors <= 0:
+        raise SystemExit("--prim-seed-neighbors must be greater than 0")
     if args.beam_width <= 0:
         raise SystemExit("--beam-width must be greater than 0")
     if args.beam_candidates is not None and args.beam_candidates <= 0:

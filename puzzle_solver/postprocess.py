@@ -4,7 +4,7 @@ import time
 
 import numpy as np
 
-from .enums import JoinDirection
+from .enums import JoinDirection, OPPOSITE_DIRECTIONS
 from .models import BestConnection
 
 
@@ -20,6 +20,11 @@ BASE_TO_COMPONENT_DIRECTIONS = (
     (0, -1),
     (0, 1),
 )
+SPLIT_SEAM_DIRECTIONS = (
+    (0, 1, JoinDirection.RIGHT),
+    (1, 0, JoinDirection.DOWN),
+)
+CONSENSUS_SHIFT_PROGRESS_INTERVAL_SECONDS = 5.0
 FILL_PROGRESS_INTERVAL_SECONDS = 5.0
 CONSERVATIVE_FILL_SCORE_QUANTILE = 0.90
 CONSERVATIVE_FILL_SCORE_MULTIPLIER = 1.10
@@ -370,6 +375,392 @@ def fillScore(frame, row, col, candidate):
         candidate.score_dict,
         candidate.piece_number,
     )
+
+
+def seamRepairScore(piece, neighbor, direction):
+    opposite_direction = OPPOSITE_DIRECTIONS[direction]
+    scores = []
+    for own_piece, own_direction, join_piece in (
+            (piece, direction, neighbor),
+            (neighbor, opposite_direction, piece)):
+        score = own_piece.score_dict.get(
+            (
+                own_piece.piece_number,
+                own_direction,
+                join_piece.piece_number,
+            ),
+            math.inf,
+        )
+        if not math.isinf(score):
+            scores.append(float(score))
+    if not scores:
+        return math.inf
+    return max(scores)
+
+
+def scoreAsFloat(score):
+    if isinstance(score, tuple):
+        return float(score[0])
+    return float(score)
+
+
+def topCandidatesForDirection(score_dict, piece_number, direction, limit, cache):
+    key = (piece_number, direction, limit)
+    if key in cache:
+        return cache[key]
+
+    scalar_values = getattr(score_dict, "scalarScoreValues", lambda: None)()
+    if scalar_values is not None:
+        direction_index = list(JoinDirection).index(direction)
+        scores = np.asarray(
+            scalar_values[piece_number, direction_index, :],
+            dtype=np.float64,
+        ).copy()
+        if scores.size == 0:
+            cache[key] = frozenset()
+            return cache[key]
+        scores[0] = np.inf
+        scores[piece_number] = np.inf
+        scores[np.isnan(scores)] = np.inf
+        finite = np.isfinite(scores)
+        if not np.any(finite):
+            cache[key] = frozenset()
+            return cache[key]
+        candidate_limit = min(limit, int(np.count_nonzero(finite)))
+        candidate_indices = np.argpartition(
+            scores,
+            candidate_limit - 1,
+        )[:candidate_limit]
+        candidates = frozenset(
+            int(candidate)
+            for candidate in candidate_indices
+            if np.isfinite(scores[candidate])
+        )
+        cache[key] = candidates
+        return candidates
+
+    candidates = []
+    for own_piece, score_direction, join_piece in score_dict:
+        if own_piece != piece_number or score_direction != direction:
+            continue
+        if join_piece == piece_number:
+            continue
+        candidates.append((
+            scoreAsFloat(score_dict[own_piece, score_direction, join_piece]),
+            join_piece,
+        ))
+    cache[key] = frozenset(
+        join_piece
+        for _score, join_piece in heapq.nsmallest(limit, candidates)
+    )
+    return cache[key]
+
+
+def isMutualTopCandidate(piece, neighbor, direction, top_k, cache):
+    opposite_direction = OPPOSITE_DIRECTIONS[direction]
+    score_dict = piece.score_dict
+    return (
+        neighbor.piece_number
+        in topCandidatesForDirection(
+            score_dict,
+            piece.piece_number,
+            direction,
+            top_k,
+            cache,
+        )
+        and piece.piece_number
+        in topCandidatesForDirection(
+            score_dict,
+            neighbor.piece_number,
+            opposite_direction,
+            top_k,
+            cache,
+        )
+    )
+
+
+def seamLocalSupport(frame, row, col, direction, top_k, cache):
+    height, width = frame.shape
+    support = 0
+
+    def has_mutual_seam(first_row, first_col, seam_direction):
+        row_delta, col_delta = {
+            JoinDirection.RIGHT: (0, 1),
+            JoinDirection.DOWN: (1, 0),
+        }[seam_direction]
+        second_row = first_row + row_delta
+        second_col = first_col + col_delta
+        if not (
+                0 <= first_row < height
+                and 0 <= first_col < width
+                and 0 <= second_row < height
+                and 0 <= second_col < width):
+            return False
+        first_piece = frame[first_row, first_col]
+        second_piece = frame[second_row, second_col]
+        if first_piece == 0 or second_piece == 0:
+            return False
+        return isMutualTopCandidate(
+            first_piece,
+            second_piece,
+            seam_direction,
+            top_k,
+            cache,
+        )
+
+    if direction == JoinDirection.RIGHT:
+        if (
+                has_mutual_seam(row - 1, col, JoinDirection.RIGHT)
+                and has_mutual_seam(row - 1, col, JoinDirection.DOWN)
+                and has_mutual_seam(row - 1, col + 1, JoinDirection.DOWN)):
+            support += 1
+        if (
+                has_mutual_seam(row + 1, col, JoinDirection.RIGHT)
+                and has_mutual_seam(row, col, JoinDirection.DOWN)
+                and has_mutual_seam(row, col + 1, JoinDirection.DOWN)):
+            support += 1
+    elif direction == JoinDirection.DOWN:
+        if (
+                has_mutual_seam(row, col - 1, JoinDirection.DOWN)
+                and has_mutual_seam(row, col - 1, JoinDirection.RIGHT)
+                and has_mutual_seam(row + 1, col - 1, JoinDirection.RIGHT)):
+            support += 1
+        if (
+                has_mutual_seam(row, col + 1, JoinDirection.DOWN)
+                and has_mutual_seam(row, col, JoinDirection.RIGHT)
+                and has_mutual_seam(row + 1, col, JoinDirection.RIGHT)):
+            support += 1
+    return support
+
+
+def splitSegmentByConsensus(
+        segment,
+        top_k,
+        min_local_support,
+        next_component_id):
+    frame = segment.pic_connection_matrix
+    positions = {
+        (int(row), int(col))
+        for row, col in zip(*np.where(frame != 0))
+    }
+    if len(positions) <= 1:
+        segment._consensus_origin = (0, 0)
+        return [segment], 0, next_component_id
+
+    adjacency = {
+        position: []
+        for position in positions
+    }
+    cut_count = 0
+    cache = {}
+    height, width = frame.shape
+    for row, col in positions:
+        piece = frame[row, col]
+        for row_delta, col_delta, direction in SPLIT_SEAM_DIRECTIONS:
+            neighbor_row = row + row_delta
+            neighbor_col = col + col_delta
+            if not (0 <= neighbor_row < height and 0 <= neighbor_col < width):
+                continue
+            neighbor_position = (neighbor_row, neighbor_col)
+            if neighbor_position not in positions:
+                continue
+            neighbor = frame[neighbor_position]
+            keep_seam = isMutualTopCandidate(
+                piece,
+                neighbor,
+                direction,
+                top_k,
+                cache,
+            )
+            if keep_seam and min_local_support > 0:
+                keep_seam = (
+                    seamLocalSupport(frame, row, col, direction, top_k, cache)
+                    >= min_local_support
+                )
+            if not keep_seam:
+                cut_count += 1
+                continue
+            adjacency[(row, col)].append(neighbor_position)
+            adjacency[neighbor_position].append((row, col))
+
+    components = []
+    remaining = set(positions)
+    while remaining:
+        start = remaining.pop()
+        component = {start}
+        stack = [start]
+        while stack:
+            position = stack.pop()
+            for neighbor_position in adjacency[position]:
+                if neighbor_position not in remaining:
+                    continue
+                remaining.remove(neighbor_position)
+                component.add(neighbor_position)
+                stack.append(neighbor_position)
+        components.append(component)
+
+    if len(components) <= 1:
+        segment._consensus_origin = (0, 0)
+        return [segment], cut_count, next_component_id
+
+    components.sort(key=lambda component: min(component))
+    split_segments = []
+    for component in components:
+        min_row = min(row for row, _col in component)
+        max_row = max(row for row, _col in component)
+        min_col = min(col for _row, col in component)
+        max_col = max(col for _row, col in component)
+        split_frame = np.zeros(
+            (max_row - min_row + 1, max_col - min_col + 1),
+            dtype=object,
+        )
+        split_binary = np.zeros(split_frame.shape)
+        for row, col in component:
+            split_row = row - min_row
+            split_col = col - min_col
+            split_frame[split_row, split_col] = frame[row, col]
+            split_binary[split_row, split_col] = 1
+
+        base_position = min(component)
+        split_segment = frame[base_position]
+        split_segment.pic_connection_matrix = split_frame
+        split_segment.binary_connection_matrix = split_binary
+        split_segment.component_id = next_component_id
+        split_segment.enforce_frame_bounds = getattr(
+            segment,
+            "enforce_frame_bounds",
+            True,
+        )
+        split_segment._kruskal_component_data = None
+        split_segment._consensus_origin = (min_row, min_col)
+        next_component_id += 1
+        split_segments.append(split_segment)
+
+    return split_segments, cut_count, next_component_id
+
+
+def splitSegmentByBadJoins(segment, max_score, next_component_id):
+    frame = segment.pic_connection_matrix
+    positions = {
+        (int(row), int(col))
+        for row, col in zip(*np.where(frame != 0))
+    }
+    if len(positions) <= 1:
+        return [segment], 0, next_component_id
+
+    adjacency = {
+        position: []
+        for position in positions
+    }
+    cut_count = 0
+    height, width = frame.shape
+    for row, col in positions:
+        piece = frame[row, col]
+        for row_delta, col_delta, direction in SPLIT_SEAM_DIRECTIONS:
+            neighbor_row = row + row_delta
+            neighbor_col = col + col_delta
+            if not (0 <= neighbor_row < height and 0 <= neighbor_col < width):
+                continue
+            neighbor_position = (neighbor_row, neighbor_col)
+            if neighbor_position not in positions:
+                continue
+            neighbor = frame[neighbor_position]
+            score = seamRepairScore(piece, neighbor, direction)
+            if score > max_score:
+                cut_count += 1
+                continue
+            adjacency[(row, col)].append(neighbor_position)
+            adjacency[neighbor_position].append((row, col))
+
+    if cut_count == 0:
+        return [segment], 0, next_component_id
+
+    components = []
+    remaining = set(positions)
+    while remaining:
+        start = remaining.pop()
+        component = {start}
+        stack = [start]
+        while stack:
+            position = stack.pop()
+            for neighbor_position in adjacency[position]:
+                if neighbor_position not in remaining:
+                    continue
+                remaining.remove(neighbor_position)
+                component.add(neighbor_position)
+                stack.append(neighbor_position)
+        components.append(component)
+
+    if len(components) <= 1:
+        return [segment], cut_count, next_component_id
+
+    split_segments = []
+    for component in components:
+        min_row = min(row for row, _col in component)
+        max_row = max(row for row, _col in component)
+        min_col = min(col for _row, col in component)
+        max_col = max(col for _row, col in component)
+        split_frame = np.zeros(
+            (max_row - min_row + 1, max_col - min_col + 1),
+            dtype=object,
+        )
+        split_binary = np.zeros(split_frame.shape)
+        for row, col in component:
+            split_row = row - min_row
+            split_col = col - min_col
+            split_frame[split_row, split_col] = frame[row, col]
+            split_binary[split_row, split_col] = 1
+
+        base_position = min(component)
+        split_segment = frame[base_position]
+        split_segment.pic_connection_matrix = split_frame
+        split_segment.binary_connection_matrix = split_binary
+        split_segment.component_id = next_component_id
+        split_segment.enforce_frame_bounds = getattr(
+            segment,
+            "enforce_frame_bounds",
+            True,
+        )
+        split_segment._kruskal_component_data = None
+        next_component_id += 1
+        split_segments.append(split_segment)
+
+    return split_segments, cut_count, next_component_id
+
+
+def splitBadJoinComponents(segment_list, max_score):
+    if not segment_list:
+        return {
+            "before": 0,
+            "after": 0,
+            "cut_edges": 0,
+            "split_components": 0,
+        }
+    next_component_id = max(segment.component_id for segment in segment_list) + 1
+    repaired_segments = []
+    cut_edges = 0
+    split_components = 0
+    for segment in segment_list:
+        split_segments, segment_cut_edges, next_component_id = (
+            splitSegmentByBadJoins(
+                segment,
+                max_score,
+                next_component_id,
+            )
+        )
+        cut_edges += segment_cut_edges
+        if len(split_segments) > 1:
+            split_components += 1
+        repaired_segments.extend(split_segments)
+
+    before = len(segment_list)
+    segment_list[:] = repaired_segments
+    return {
+        "before": before,
+        "after": len(segment_list),
+        "cut_edges": cut_edges,
+        "split_components": split_components,
+    }
 
 
 def pushHoleScores(heap, frame, row, col, remaining, hole_versions):
@@ -908,6 +1299,485 @@ def placeComponentsInFrame(frame, components, allow_overlap=False):
         total_neighbor_count,
         total_score,
     )
+
+
+def placeComponentsInFrameConstrained(
+        frame,
+        components,
+        min_neighbor_count=2,
+        max_score=None):
+    unplaced = list(components)
+    placed = 0
+    placed_pieces = 0
+    total_neighbor_count = 0
+    total_score = 0.0
+    while unplaced:
+        best = None
+        for component_index, component in enumerate(unplaced):
+            component_size = componentSize(component)
+            for row_offset, col_offset in iterComponentPlacements(frame, component):
+                score, neighbor_count = componentPlacementScore(
+                    frame,
+                    component,
+                    row_offset,
+                    col_offset,
+                )
+                if math.isinf(score):
+                    continue
+                if neighbor_count < min_neighbor_count:
+                    continue
+                if max_score is not None and score > max_score:
+                    continue
+                item = (
+                    -neighbor_count,
+                    score,
+                    -component_size,
+                    component.piece_number,
+                    row_offset,
+                    col_offset,
+                    component_index,
+                )
+                if best is None or item < best:
+                    best = item
+        if best is None:
+            break
+
+        (
+            _neighbor_count,
+            score,
+            _component_size,
+            _piece_number,
+            row_offset,
+            col_offset,
+            component_index,
+        ) = best
+        neighbor_count = -_neighbor_count
+        component = unplaced.pop(component_index)
+        placeComponent(frame, component, row_offset, col_offset)
+        placed += 1
+        placed_pieces += componentSize(component)
+        total_neighbor_count += neighbor_count
+        total_score += score * neighbor_count
+
+    return placed, placed_pieces, unplaced, total_neighbor_count, total_score
+
+
+def placeComponentsInFrameConstrainedLargeFirst(
+        frame,
+        components,
+        min_neighbor_count=2,
+        max_score=None):
+    unplaced = list(components)
+    placed = 0
+    placed_pieces = 0
+    total_neighbor_count = 0
+    total_score = 0.0
+    while unplaced:
+        best = None
+        for component_index, component in enumerate(unplaced):
+            component_size = componentSize(component)
+            for row_offset, col_offset in iterComponentPlacements(frame, component):
+                score, neighbor_count = componentPlacementScore(
+                    frame,
+                    component,
+                    row_offset,
+                    col_offset,
+                )
+                if math.isinf(score):
+                    continue
+                if neighbor_count < min_neighbor_count:
+                    continue
+                if max_score is not None and score > max_score:
+                    continue
+                item = (
+                    -component_size,
+                    score,
+                    -neighbor_count,
+                    component.piece_number,
+                    row_offset,
+                    col_offset,
+                    component_index,
+                )
+                if best is None or item < best:
+                    best = item
+        if best is None:
+            break
+
+        (
+            _component_size,
+            score,
+            _neighbor_count,
+            _piece_number,
+            row_offset,
+            col_offset,
+            component_index,
+        ) = best
+        neighbor_count = -_neighbor_count
+        component = unplaced.pop(component_index)
+        placeComponent(frame, component, row_offset, col_offset)
+        placed += 1
+        placed_pieces += componentSize(component)
+        total_neighbor_count += neighbor_count
+        total_score += score * neighbor_count
+
+    return placed, placed_pieces, unplaced, total_neighbor_count, total_score
+
+
+def repairFrameStarts(segment):
+    frame_height = segment.max_height
+    frame_width = segment.max_width
+    height, width = segment.pic_connection_matrix.shape
+    if height <= frame_height:
+        row_starts = range(-(frame_height - height), 1)
+    else:
+        row_starts = range(0, height - frame_height + 1)
+    if width <= frame_width:
+        col_starts = range(-(frame_width - width), 1)
+    else:
+        col_starts = range(0, width - frame_width + 1)
+    for row_start in row_starts:
+        for col_start in col_starts:
+            yield row_start, col_start
+
+
+def placeRepairedComponentsInFrame(
+        segment_list,
+        min_neighbor_count=2,
+        max_score=None,
+        large_first=False):
+    if len(segment_list) <= 1:
+        return {
+            "before": len(segment_list),
+            "after": len(segment_list),
+            "placed_components": 0,
+            "placed_pieces": 0,
+            "neighbor_count": 0,
+            "average_score": math.inf,
+        }
+
+    root = max(segment_list, key=componentSize)
+    components = [
+        component
+        for component in segment_list
+        if component is not root
+    ]
+    best = None
+    for row_start, col_start in repairFrameStarts(root):
+        frame, trimmed = trimFrame(root, row_start, col_start)
+        root_preserved_pieces = componentSize(root) - len(trimmed)
+        place_components = (
+            placeComponentsInFrameConstrainedLargeFirst
+            if large_first
+            else placeComponentsInFrameConstrained
+        )
+        (
+            placed,
+            placed_pieces,
+            unplaced,
+            neighbor_count,
+            placement_score,
+        ) = place_components(
+            frame,
+            components,
+            min_neighbor_count=min_neighbor_count,
+            max_score=max_score,
+        )
+        occupied = int(np.count_nonzero(frame))
+        average_score_value = averageScore(placement_score, neighbor_count)
+        key = (
+            placed_pieces,
+            placed,
+            neighbor_count,
+            -average_score_value,
+            root_preserved_pieces,
+            occupied,
+            -len(trimmed),
+            -abs(row_start),
+            -abs(col_start),
+            -root.piece_number,
+        )
+        if best is None or key > best[0]:
+            best = (
+                key,
+                frame,
+                trimmed,
+                placed,
+                placed_pieces,
+                unplaced,
+                neighbor_count,
+                average_score_value,
+            )
+
+    if best is None:
+        return {
+            "before": len(segment_list),
+            "after": len(segment_list),
+            "placed_components": 0,
+            "placed_pieces": 0,
+            "neighbor_count": 0,
+            "average_score": math.inf,
+        }
+
+    (
+        _key,
+        frame,
+        _trimmed,
+        placed,
+        placed_pieces,
+        unplaced,
+        neighbor_count,
+        average_score_value,
+    ) = best
+    root.pic_connection_matrix = frame
+    root.binary_connection_matrix = (frame != 0).astype(int)
+    root._kruskal_component_data = None
+    before = len(segment_list)
+    segment_list[:] = [root] + unplaced
+    return {
+        "before": before,
+        "after": len(segment_list),
+        "placed_components": placed,
+        "placed_pieces": placed_pieces,
+        "neighbor_count": neighbor_count,
+        "average_score": average_score_value,
+    }
+
+
+def placeConsensusComponentsInFrame(
+        segment_list,
+        min_neighbor_count=2,
+        max_score=None):
+    for segment in segment_list:
+        stripEmptyBorder(segment)
+    return placeRepairedComponentsInFrame(
+        segment_list,
+        min_neighbor_count=min_neighbor_count,
+        max_score=max_score,
+    )
+
+
+def componentOrigin(component):
+    return getattr(component, "_consensus_origin", (0, 0))
+
+
+def placeComponentAtOrigin(frame, component):
+    row_offset, col_offset = componentOrigin(component)
+    component_matrix = component.pic_connection_matrix
+    height, width = frame.shape
+    for row, col in zip(*np.where(component_matrix != 0)):
+        frame_row = row + row_offset
+        frame_col = col + col_offset
+        if not (0 <= frame_row < height and 0 <= frame_col < width):
+            return False
+        if frame[frame_row, frame_col] != 0:
+            return False
+    placeComponent(frame, component, row_offset, col_offset)
+    return True
+
+
+def iterShiftedComponentPlacements(frame, component, max_shift):
+    origin_row, origin_col = componentOrigin(component)
+    component_matrix = component.pic_connection_matrix
+    occupied_rows, occupied_cols = np.where(component_matrix != 0)
+    if len(occupied_rows) == 0:
+        return
+
+    frame_height, frame_width = frame.shape
+    min_row = int(occupied_rows.min())
+    max_row = int(occupied_rows.max())
+    min_col = int(occupied_cols.min())
+    max_col = int(occupied_cols.max())
+    for row_offset in range(origin_row - max_shift, origin_row + max_shift + 1):
+        if row_offset + min_row < 0 or row_offset + max_row >= frame_height:
+            continue
+        for col_offset in range(
+                origin_col - max_shift,
+                origin_col + max_shift + 1):
+            if col_offset + min_col < 0 or col_offset + max_col >= frame_width:
+                continue
+            blocked = False
+            for row, col in zip(occupied_rows, occupied_cols):
+                if frame[row + row_offset, col + col_offset] != 0:
+                    blocked = True
+                    break
+            if not blocked:
+                yield row_offset, col_offset
+
+
+def placeConsensusComponentsByShift(
+        components,
+        min_neighbor_count=3,
+        max_shift=1,
+        max_score=None):
+    if not components:
+        return None, [], {
+            "placed_components": 0,
+            "placed_pieces": 0,
+            "neighbor_count": 0,
+            "average_score": math.inf,
+        }
+
+    root = max(components, key=componentSize)
+    frame = np.zeros((root.max_height, root.max_width), dtype=object)
+    if not placeComponentAtOrigin(frame, root):
+        return root, [component for component in components if component is not root], {
+            "placed_components": 0,
+            "placed_pieces": 0,
+            "neighbor_count": 0,
+            "average_score": math.inf,
+        }
+
+    unplaced = [
+        component
+        for component in components
+        if component is not root
+    ]
+    placed = 0
+    placed_pieces = 0
+    total_neighbor_count = 0
+    total_score = 0.0
+    while unplaced:
+        best = None
+        for component_index, component in enumerate(unplaced):
+            component_size = componentSize(component)
+            for row_offset, col_offset in iterShiftedComponentPlacements(
+                    frame,
+                    component,
+                    max_shift):
+                score, neighbor_count = componentPlacementScore(
+                    frame,
+                    component,
+                    row_offset,
+                    col_offset,
+                )
+                if math.isinf(score):
+                    continue
+                if neighbor_count < min_neighbor_count:
+                    continue
+                if max_score is not None and score > max_score:
+                    continue
+                origin_row, origin_col = componentOrigin(component)
+                shift_distance = (
+                    abs(row_offset - origin_row)
+                    + abs(col_offset - origin_col)
+                )
+                item = (
+                    score,
+                    -neighbor_count,
+                    shift_distance,
+                    -component_size,
+                    component.piece_number,
+                    row_offset,
+                    col_offset,
+                    component_index,
+                )
+                if best is None or item < best:
+                    best = item
+        if best is None:
+            break
+
+        (
+            score,
+            _neighbor_count,
+            _shift_distance,
+            _component_size,
+            _piece_number,
+            row_offset,
+            col_offset,
+            component_index,
+        ) = best
+        neighbor_count = -_neighbor_count
+        component = unplaced.pop(component_index)
+        placeComponent(frame, component, row_offset, col_offset)
+        placed += 1
+        placed_pieces += componentSize(component)
+        total_neighbor_count += neighbor_count
+        total_score += score * neighbor_count
+
+    root.pic_connection_matrix = frame
+    root.binary_connection_matrix = (frame != 0).astype(int)
+    root._kruskal_component_data = None
+    return root, unplaced, {
+        "placed_components": placed,
+        "placed_pieces": placed_pieces,
+        "neighbor_count": total_neighbor_count,
+        "average_score": averageScore(total_score, total_neighbor_count),
+    }
+
+
+def repairConsensusShifts(
+        segment_list,
+        top_k=5,
+        min_local_support=1,
+        min_neighbor_count=3,
+        max_shift=1,
+        max_score=None):
+    if not segment_list:
+        return {
+            "before": 0,
+            "after": 0,
+            "cut_edges": 0,
+            "split_components": 0,
+            "placed_components": 0,
+            "placed_pieces": 0,
+            "neighbor_count": 0,
+            "average_score": math.inf,
+        }
+
+    next_component_id = max(segment.component_id for segment in segment_list) + 1
+    repaired_segments = []
+    cut_edges = 0
+    split_components = 0
+    placed_components = 0
+    placed_pieces = 0
+    neighbor_count = 0
+    total_score = 0.0
+
+    for segment in segment_list:
+        split_segments, segment_cut_edges, next_component_id = (
+            splitSegmentByConsensus(
+                segment,
+                top_k,
+                min_local_support,
+                next_component_id,
+            )
+        )
+        cut_edges += segment_cut_edges
+        if len(split_segments) <= 1:
+            repaired_segments.extend(split_segments)
+            continue
+
+        split_components += 1
+        root, unplaced, placement_stats = placeConsensusComponentsByShift(
+            split_segments,
+            min_neighbor_count=min_neighbor_count,
+            max_shift=max_shift,
+            max_score=max_score,
+        )
+        if root is not None:
+            repaired_segments.append(root)
+        repaired_segments.extend(unplaced)
+        placed_components += placement_stats["placed_components"]
+        placed_pieces += placement_stats["placed_pieces"]
+        neighbor_count += placement_stats["neighbor_count"]
+        if not math.isinf(placement_stats["average_score"]):
+            total_score += (
+                placement_stats["average_score"]
+                * placement_stats["neighbor_count"]
+            )
+
+    before = len(segment_list)
+    segment_list[:] = repaired_segments
+    return {
+        "before": before,
+        "after": len(segment_list),
+        "cut_edges": cut_edges,
+        "split_components": split_components,
+        "placed_components": placed_components,
+        "placed_pieces": placed_pieces,
+        "neighbor_count": neighbor_count,
+        "average_score": averageScore(total_score, neighbor_count),
+    }
 
 
 def placeComponents(segment, components):

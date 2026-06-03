@@ -3,6 +3,7 @@ from .distances import (
     mahalanobisEdgeDistance,
     mgcEdgeDistance,
     mgcEdgeMahalanobisDistance,
+    predictionEdgeDistance,
 )
 from .enums import (
     JOIN_EDGE_PAIRS,
@@ -93,12 +94,42 @@ def scorePayloadPair(segment1, segment2, score_algorithm):
             )
             for own_direction, compare_direction in JOIN_EDGE_PAIRS
         ]
+    elif score_algorithm == ScoreAlgorithm.PREDICTION:
+        scores = [
+            (
+                own_direction,
+                predictionEdgeDistance(
+                    own_edges[own_direction],
+                    compare_edges[compare_direction],
+                ),
+            )
+            for own_direction, compare_direction in JOIN_EDGE_PAIRS
+        ]
+    elif score_algorithm == ScoreAlgorithm.MGC_PREDICTION:
+        scores = [
+            (
+                own_direction,
+                (
+                    mgcEdgeMahalanobisDistance(
+                        own_edges[own_direction],
+                        compare_edges[compare_direction],
+                    ),
+                    predictionEdgeDistance(
+                        own_edges[own_direction],
+                        compare_edges[compare_direction],
+                    ),
+                ),
+            )
+            for own_direction, compare_direction in JOIN_EDGE_PAIRS
+        ]
     else:
         return None
     return reciprocalScoreEntries(segment1.piece_number, segment2.piece_number, scores)
 
 
 def scoreComponentCount(score_algorithm):
-    if score_algorithm == ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS:
+    if score_algorithm in (
+            ScoreAlgorithm.EUCLIDEAN_AND_MAHALANOBIS,
+            ScoreAlgorithm.MGC_PREDICTION):
         return 2
     return 1

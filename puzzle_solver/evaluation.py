@@ -35,6 +35,13 @@ class DisjointSet:
             if item == root
         )
 
+    def groups(self):
+        groups = {}
+        for item in self.parent:
+            root = self.find(item)
+            groups.setdefault(root, []).append(item)
+        return groups
+
 
 def piecePosition(piece_number, width):
     return divmod(piece_number - 1, width)
@@ -163,6 +170,258 @@ def directPlacementQuality(segment_list):
         "accuracy": best_direct / total if total else 0.0,
         "offset": best_offset,
     }
+
+
+def scoreValue(score_dict, own_number, direction, join_number):
+    if hasattr(score_dict, "scoreValue"):
+        return score_dict.scoreValue(own_number, direction, join_number)
+    return score_dict.get((own_number, direction, join_number), float("inf"))
+
+
+def assembledNeighborPairs(segment_list):
+    from .enums import JoinDirection
+
+    directions = (
+        (0, 1, JoinDirection.RIGHT),
+        (1, 0, JoinDirection.DOWN),
+    )
+    for segment_index, segment in enumerate(segment_list):
+        matrix = segment.pic_connection_matrix
+        rows, cols = matrix.shape
+        for row in range(rows):
+            for col in range(cols):
+                piece = matrix[row, col]
+                if piece == 0:
+                    continue
+                for row_delta, col_delta, direction in directions:
+                    neighbor_row = row + row_delta
+                    neighbor_col = col + col_delta
+                    if not (
+                            0 <= neighbor_row < rows
+                            and 0 <= neighbor_col < cols):
+                        continue
+                    neighbor = matrix[neighbor_row, neighbor_col]
+                    if neighbor == 0:
+                        continue
+                    yield {
+                        "segment_index": segment_index,
+                        "piece": piece,
+                        "neighbor": neighbor,
+                        "row": row,
+                        "col": col,
+                        "neighbor_row": neighbor_row,
+                        "neighbor_col": neighbor_col,
+                        "direction": direction,
+                        "row_delta": row_delta,
+                        "col_delta": col_delta,
+                    }
+
+
+def correctIslandDetails(segment_list, limit=5):
+    islands = DisjointSet()
+    positions = {}
+    segment_index_by_segment = {
+        segment: index
+        for index, segment in enumerate(segment_list)
+    }
+    for segment, row, col, piece in iterPlacedPieces(segment_list):
+        islands.add(piece.piece_number)
+        true_row, true_col = piecePosition(piece.piece_number, piece.max_height)
+        positions[piece.piece_number] = {
+            "segment_index": segment_index_by_segment[segment],
+            "row": row,
+            "col": col,
+            "true_row": true_row,
+            "true_col": true_col,
+        }
+
+    for pair in assembledNeighborPairs(segment_list):
+        piece = pair["piece"]
+        neighbor = pair["neighbor"]
+        if isCorrectNeighbor(
+                piece,
+                neighbor,
+                pair["row_delta"],
+                pair["col_delta"]):
+            islands.union(piece.piece_number, neighbor.piece_number)
+
+    details = []
+    for pieces in islands.groups().values():
+        piece_positions = [
+            positions[piece_number]
+            for piece_number in pieces
+            if piece_number in positions
+        ]
+        true_rows = [position["true_row"] for position in piece_positions]
+        true_cols = [position["true_col"] for position in piece_positions]
+        placed_rows = [position["row"] for position in piece_positions]
+        placed_cols = [position["col"] for position in piece_positions]
+        segment_indices = sorted({
+            position["segment_index"]
+            for position in piece_positions
+        })
+        details.append({
+            "size": len(pieces),
+            "sample_pieces": tuple(sorted(pieces)[:8]),
+            "segment_indices": tuple(segment_indices),
+            "true_bbox": (
+                min(true_rows),
+                min(true_cols),
+                max(true_rows),
+                max(true_cols),
+            ),
+            "placed_bbox": (
+                min(placed_rows),
+                min(placed_cols),
+                max(placed_rows),
+                max(placed_cols),
+            ),
+        })
+    details.sort(key=lambda item: (-item["size"], item["sample_pieces"]))
+    return details[:limit]
+
+
+def bestDirectPlacementDetails(segment_list):
+    best = None
+    for segment_index, segment in enumerate(segment_list):
+        votes = {}
+        piece_data = []
+        for _segment, row, col, piece in iterPlacedPieces([segment]):
+            true_row, true_col = piecePosition(piece.piece_number, piece.max_height)
+            offset = (true_row - row, true_col - col)
+            votes[offset] = votes.get(offset, 0) + 1
+            piece_data.append((piece.piece_number, row, col, true_row, true_col))
+        if not votes:
+            continue
+        offset, direct = max(votes.items(), key=lambda item: item[1])
+        if best is None or direct > best["direct"]:
+            mismatches = []
+            for piece_number, row, col, true_row, true_col in piece_data:
+                if (true_row - row, true_col - col) == offset:
+                    continue
+                mismatches.append({
+                    "piece": piece_number,
+                    "placed": (row, col),
+                    "true": (true_row, true_col),
+                    "offset": (true_row - row, true_col - col),
+                })
+            best = {
+                "segment_index": segment_index,
+                "segment_size": componentSize(segment),
+                "offset": offset,
+                "direct": direct,
+                "mismatch_count": len(mismatches),
+                "mismatches": sorted(
+                    mismatches,
+                    key=lambda item: item["piece"],
+                )[:10],
+            }
+    return best
+
+
+def falseSeamDetails(segment_list, limit=12):
+    if not segment_list:
+        return []
+    score_dict = segment_list[0].score_dict
+    false_seams = []
+    for pair in assembledNeighborPairs(segment_list):
+        piece = pair["piece"]
+        neighbor = pair["neighbor"]
+        if isCorrectNeighbor(
+                piece,
+                neighbor,
+                pair["row_delta"],
+                pair["col_delta"]):
+            continue
+        piece_true = piecePosition(piece.piece_number, piece.max_height)
+        neighbor_true = piecePosition(
+            neighbor.piece_number,
+            neighbor.max_height,
+        )
+        score = scoreValue(
+            score_dict,
+            piece.piece_number,
+            pair["direction"],
+            neighbor.piece_number,
+        )
+        false_seams.append({
+            "score": float(score),
+            "piece": piece.piece_number,
+            "neighbor": neighbor.piece_number,
+            "direction": pair["direction"].name.lower(),
+            "segment_index": pair["segment_index"],
+            "placed": (pair["row"], pair["col"]),
+            "neighbor_placed": (pair["neighbor_row"], pair["neighbor_col"]),
+            "true": piece_true,
+            "neighbor_true": neighbor_true,
+            "true_delta": (
+                neighbor_true[0] - piece_true[0],
+                neighbor_true[1] - piece_true[1],
+            ),
+        })
+    false_seams.sort(key=lambda item: (item["score"], item["piece"]))
+    return false_seams[:limit]
+
+
+def errorDiagnosticReport(segment_list, limit=12):
+    return {
+        "quality": paperStyleReport(segment_list),
+        "best_direct_component": bestDirectPlacementDetails(segment_list),
+        "correct_islands": correctIslandDetails(segment_list, limit=5),
+        "false_seams": falseSeamDetails(segment_list, limit=limit),
+    }
+
+
+def formatErrorDiagnosticReport(report):
+    lines = ["Error diagnostics:"]
+    best_direct = report["best_direct_component"]
+    if best_direct is None:
+        lines.append("  best direct component: none")
+    else:
+        lines.append(
+            "  best direct component: "
+            f"segment={best_direct['segment_index']} "
+            f"size={best_direct['segment_size']} "
+            f"direct={best_direct['direct']} "
+            f"offset={best_direct['offset']} "
+            f"mismatches={best_direct['mismatch_count']}"
+        )
+        if best_direct["mismatches"]:
+            lines.append("  sample direct mismatches:")
+            for mismatch in best_direct["mismatches"]:
+                lines.append(
+                    "    "
+                    f"piece={mismatch['piece']} "
+                    f"placed={mismatch['placed']} "
+                    f"true={mismatch['true']} "
+                    f"offset={mismatch['offset']}"
+                )
+
+    lines.append("  largest correct islands:")
+    for index, island in enumerate(report["correct_islands"], start=1):
+        lines.append(
+            "    "
+            f"{index}. size={island['size']} "
+            f"segments={island['segment_indices']} "
+            f"true_bbox={island['true_bbox']} "
+            f"placed_bbox={island['placed_bbox']} "
+            f"sample={island['sample_pieces']}"
+        )
+
+    lines.append("  lowest-score false seams:")
+    if not report["false_seams"]:
+        lines.append("    none")
+    for seam in report["false_seams"]:
+        lines.append(
+            "    "
+            f"score={seam['score']:.6g} "
+            f"{seam['piece']}->{seam['neighbor']} "
+            f"dir={seam['direction']} "
+            f"placed={seam['placed']}->{seam['neighbor_placed']} "
+            f"true={seam['true']}->{seam['neighbor_true']} "
+            f"true_delta={seam['true_delta']}"
+        )
+    return "\n".join(lines)
 
 
 def trueNeighborRankStats(segment_list, max_rank=5):

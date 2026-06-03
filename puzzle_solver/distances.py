@@ -27,6 +27,46 @@ def euclideanDistances(edge, compare_edges):
     return np.sqrt(np.sum(diff * diff, axis=2)).sum(axis=1)
 
 
+def predictionDistance(source_edge, target_edge):
+    predicted = source_edge.edge + (source_edge.edge - source_edge.adjacent_edge)
+    diff = predicted - target_edge.edge
+    return float(np.sqrt(np.sum(diff * diff, axis=1)).sum())
+
+
+def predictionDistances(edge, adjacent_edge, compare_edges):
+    predicted = edge + (edge - adjacent_edge)
+    diff = predicted[np.newaxis, :, :] - compare_edges
+    return np.sqrt(np.sum(diff * diff, axis=2)).sum(axis=1)
+
+
+def predictionEdgeDistance(own_edge, compare_edge):
+    return (
+        predictionDistance(own_edge, compare_edge)
+        + predictionDistance(compare_edge, own_edge)
+    )
+
+
+def predictionEdgeDistances(
+        edge,
+        adjacent_edge,
+        compare_edges,
+        compare_adjacent_edges):
+    return (
+        predictionDistances(edge, adjacent_edge, compare_edges)
+        + predictionDistancesForTargets(
+            compare_edges,
+            compare_adjacent_edges,
+            edge,
+        )
+    )
+
+
+def predictionDistancesForTargets(edges, adjacent_edges, target_edge):
+    predicted = edges + (edges - adjacent_edges)
+    diff = predicted - target_edge[np.newaxis, :, :]
+    return np.sqrt(np.sum(diff * diff, axis=2)).sum(axis=1)
+
+
 def mahalanobisEdgeDistance(own_edge, compare_edge):
     matrix = (own_edge.edge - compare_edge.edge) - own_edge.average_delta
     matrix2 = (compare_edge.edge - own_edge.edge) - compare_edge.average_delta
